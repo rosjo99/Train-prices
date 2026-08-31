@@ -353,6 +353,32 @@ def test_context_route_is_registered_before_new_page(monkeypatch):
     assert browser.contexts_created == 1
 
 
+def test_sibling_endpoint_on_same_host_is_ignored_even_if_it_arrives_last(monkeypatch):
+    """Regression test for a real live failure: jpservices.nationalrail.co.uk
+    also serves sibling endpoints (e.g. "/fare-info") for other page data.
+    A same-host response handler matching on host alone would let this
+    later, unrelated response overwrite the real journey-search body,
+    producing a "successful" result with no outwardJourneys — exactly the
+    ParseError seen live. The handler must match the specific
+    "/journey-planner" path, regardless of arrival order.
+    """
+    body = {"outwardJourneys": [{"timetable": {"scheduled": {"departure": "07:25"}}}]}
+    sibling_response = FakeResponse(
+        url="https://jpservices.nationalrail.co.uk/fare-info", status=200, body={"unrelated": True}
+    )
+    real_response = _journey_planner_response(body)
+    # Sibling arrives AFTER the real response — this ordering is exactly
+    # what caused the live bug, since the old handler kept overwriting
+    # `captured` on every same-host response with no path check.
+    page = FakePage(responses=[real_response, sibling_response])
+    chromium = ScenarioChromium(pages=[page])
+    install_fake_playwright(monkeypatch, chromium)
+
+    result = scraper.fetch_journey_search(date(2026, 9, 8), attempts=1)
+
+    assert result == body
+
+
 @pytest.mark.parametrize("banner_present", [True, False])
 def test_cookie_banner_present_or_absent_both_succeed(monkeypatch, banner_present):
     body = {"outwardJourneys": []}

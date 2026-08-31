@@ -646,6 +646,33 @@ proxies, CAPTCHA solvers, or stealth plugins — this would be new,
 unexpected behaviour from a site with no bot protection at any point in
 this project's testing, worth investigating before working around.
 
+#### Bug fix: response handler matched on host only, not the specific endpoint
+
+A live 10-date test run surfaced intermittent `ParseError`s ("response
+missing top-level 'outwardJourneys'") on some dates despite NRE showing
+real prices for them, and a log line
+`journey-planner response body was not valid JSON (url=…/fare-info)` on
+a date that otherwise succeeded — a giveaway that `jpservices.
+nationalrail.co.uk` serves more than one endpoint. The response handler
+(`_make_response_handler`'s `_on_response`) matched only on
+`config.JOURNEY_PLANNER_API_HOST` being a substring of the URL, not on
+the specific `/journey-planner` path — so a sibling endpoint's response
+(e.g. `/fare-info`) also matched, and its data unconditionally
+overwrote `captured` regardless of which endpoint's response landed
+last. Whenever a sibling endpoint happened to respond *after* the real
+`/journey-planner` XHR in a given page load — a race with no bearing on
+the travel date itself, hence the day-to-day non-determinism — the
+scraper "succeeded" with the wrong endpoint's body, which the parser
+then correctly rejected for lacking `outwardJourneys`.
+
+Fixed by adding `config.JOURNEY_PLANNER_API_PATH = "/journey-planner"`
+and a new `_is_journey_planner_response(url)` helper that checks the
+URL's actual path (via `urlparse`), not just a host substring; only a
+response passing that check is ever written into `captured`. A
+regression test (`test_sibling_endpoint_on_same_host_is_ignored_even_if_it_arrives_last`
+in `tests/test_scraper.py`) replays a `/fare-info` response arriving
+*after* the real one and asserts the real journey data still wins.
+
 ---
 
 ### Task 4 — Response parser
