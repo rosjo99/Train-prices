@@ -223,6 +223,11 @@ function base64ToUtf8(b64) {
 async function githubGetFile(token) {
   const url = `${API_BASE}/repos/${OWNER}/${REPO}/contents/${encodeURIComponent(BOOKED_DATES_PATH)}?ref=${encodeURIComponent(BRANCH)}`;
   const res = await fetch(url, {
+    // Without this, the browser can serve a cached response for this
+    // authenticated GET and hand back a stale sha — the write below
+    // would then be rejected by GitHub with a 409 even though nothing
+    // else actually changed the file recently.
+    cache: "no-store",
     headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" },
   });
   if (res.status === 404) {
@@ -257,7 +262,9 @@ async function githubPutFile(token, content, sha, message) {
     body: JSON.stringify(body),
   });
   if (!res.ok) {
-    throw new Error(`GitHub API error ${res.status} saving the file: ${await res.text()}`);
+    const err = new Error(`GitHub API error ${res.status} saving the file: ${await res.text()}`);
+    err.status = res.status;
+    throw err;
   }
   return res.json();
 }
@@ -325,30 +332,48 @@ async function toggleDate(iso, checkboxEl, rowEl, isCheap) {
   }
   checkboxEl.disabled = true;
   showStatus(`Saving ${iso}…`);
+  const nowBooking = checkboxEl.checked;
+  const MAX_SAVE_ATTEMPTS = 3;
   try {
-    // Re-fetch fresh right before writing, so a change made from another
-    // device/tab in the meantime isn't clobbered.
-    const { content, sha } = await githubGetFile(token);
-    const { headerLines, dates } = parseBookedContent(content);
-    const nowBooking = checkboxEl.checked;
-    if (nowBooking) {
-      dates.add(iso);
-    } else {
-      dates.delete(iso);
-    }
-    const newContent = renderBookedContent(headerLines, dates);
-    const message = nowBooking
-      ? `Mark ${iso} as booked (via booked-dates site)`
-      : `Unmark ${iso} as booked (via booked-dates site)`;
-    await githubPutFile(token, newContent, sha, message);
-    showStatus(`Saved — ${iso} is now ${nowBooking ? "booked" : "not booked"}.`, "ok");
-    if (rowEl) {
-      rowEl.classList.toggle("row-booked", nowBooking);
-      rowEl.classList.toggle("row-cheap", !nowBooking && isCheap);
+    for (let attempt = 1; attempt <= MAX_SAVE_ATTEMPTS; attempt++) {
+      // Re-fetch fresh right before writing, so a change made from
+      // another device/tab (or a previous attempt in this same retry
+      // loop) in the meantime isn't clobbered.
+      const { content, sha } = await githubGetFile(token);
+      const { headerLines, dates } = parseBookedContent(content);
+      if (nowBooking) {
+        dates.add(iso);
+      } else {
+        dates.delete(iso);
+      }
+      const newContent = renderBookedContent(headerLines, dates);
+      const message = nowBooking
+        ? `Mark ${iso} as booked (via booked-dates site)`
+        : `Unmark ${iso} as booked (via booked-dates site)`;
+      try {
+        await githubPutFile(token, newContent, sha, message);
+      } catch (err) {
+        // 409 = the file changed between our GET and PUT above (another
+        // tab/device, or a previous attempt in this loop) — GitHub
+        // correctly refused to overwrite it blindly. Re-fetch and retry
+        // with the now-current content rather than surfacing this as a
+        // failure the user has to notice and manually retry themselves.
+        if (err.status === 409 && attempt < MAX_SAVE_ATTEMPTS) {
+          showStatus(`Saving ${iso}… (file changed, retrying)`);
+          continue;
+        }
+        throw err;
+      }
+      showStatus(`Saved — ${iso} is now ${nowBooking ? "booked" : "not booked"}.`, "ok");
+      if (rowEl) {
+        rowEl.classList.toggle("row-booked", nowBooking);
+        rowEl.classList.toggle("row-cheap", !nowBooking && isCheap);
+      }
+      return;
     }
   } catch (err) {
     console.error(err);
-    checkboxEl.checked = !checkboxEl.checked;
+    checkboxEl.checked = !nowBooking;
     if (String(err).includes("401") || String(err).includes("403")) {
       showStatus("Your token was rejected — it may have expired. See the setup instructions to create a new one.", "error");
     } else {
