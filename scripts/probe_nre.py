@@ -194,6 +194,30 @@ def main() -> int:
         except Exception as exc:
             print(f"element dump failed: {exc}", flush=True)
 
+        # Uncheck the pre-checked "Find hotels" affiliate widget BEFORE
+        # touching origin/destination at all. Root-cause finding: the
+        # previous run's uncheck attempt ran AFTER filling+selecting both
+        # origin and destination, and the Booking.com redirect fired
+        # essentially concurrently with the destination selection itself
+        # (half a second apart in the log) — the uncheck code never even
+        # got to print success or failure, meaning the page was likely
+        # already gone (navigated to the blank backstop page) by the time
+        # it ran. The trigger is almost certainly "selecting a destination
+        # while this checkbox is checked", so it must be unchecked first.
+        try:
+            hotels_checkbox = page.locator("input[type='checkbox'][value='find_hotels']")
+            if hotels_checkbox.count() > 0 and hotels_checkbox.first.is_checked():
+                hotels_checkbox.first.uncheck(force=True, timeout=3000)
+                print("unchecked find_hotels checkbox (before filling destination)", flush=True)
+            else:
+                print(
+                    f"find_hotels checkbox not found/not checked "
+                    f"(count={hotels_checkbox.count()})",
+                    flush=True,
+                )
+        except Exception as exc:
+            print(f"unchecking find_hotels failed: {exc}", flush=True)
+
         # Confirmed via the previous probe's element dump: the decoy click
         # opens a real modal with #jp-origin / #jp-destination (both
         # enabled, role=combobox with a live results list), single/return/
@@ -221,16 +245,16 @@ def main() -> int:
         except Exception as exc:
             print(f"filling #jp-origin/#jp-destination failed: {exc}", flush=True)
 
-        # Defensively uncheck the pre-checked "Find hotels" affiliate
-        # widget seen in the previous element dump, in case route-blocking
-        # doesn't cover every path to it.
+        # Re-check right after filling too, in case the destination
+        # selection re-renders the widget and re-checks it (a plausible
+        # explanation if the first uncheck didn't stick).
         try:
             hotels_checkbox = page.locator("input[type='checkbox'][value='find_hotels']")
             if hotels_checkbox.count() > 0 and hotels_checkbox.first.is_checked():
                 hotels_checkbox.first.uncheck(force=True, timeout=3000)
-                print("unchecked find_hotels checkbox", flush=True)
+                print("unchecked find_hotels checkbox (again, after filling)", flush=True)
         except Exception as exc:
-            print(f"unchecking find_hotels failed: {exc}", flush=True)
+            print(f"second unchecking find_hotels failed: {exc}", flush=True)
 
         # Railcard selection (per user request: 16-25 Railcard specifically).
         try:
