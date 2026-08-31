@@ -96,3 +96,11 @@ jobs:
             echo "=== $f (first 100 lines) ==="
             head -100 "$f" 2>/dev/null
           done
+      - name: Upload probe artifacts (screenshots etc.)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nre-probe-${{ github.run_id }}
+          path: /tmp/nre_probe/
+          retention-days: 7
+          if-no-files-found: ignore

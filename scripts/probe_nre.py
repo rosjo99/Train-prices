@@ -87,42 +87,84 @@ def main() -> int:
             except Exception:
                 continue
 
-        # Fill the origin/destination fields discovered via static HTML
-        # (name="jp_preview_origin" / name="jp_preview_destination").
+        # Dump every input/button element on the landing page so selectors
+        # can be figured out from text even without viewing the screenshot.
+        try:
+            elements = page.eval_on_selector_all(
+                "input, button, [role='combobox'], [role='listbox'], [role='option']",
+                "els => els.map(e => e.outerHTML.slice(0, 300))",
+            )
+            print(f"--- {len(elements)} input/button/combobox elements on landing page ---", flush=True)
+            for html in elements:
+                print("  ELEM:", html, flush=True)
+        except Exception as exc:
+            print(f"element dump failed: {exc}", flush=True)
+
+        # The static HTML's jp_preview_origin/destination inputs turned out
+        # to be disabled, aria-hidden decoys (confirmed by an earlier probe
+        # run) — likely a "click to open the real widget" pattern. Try a
+        # forced click on the decoy first, then look for whatever became
+        # enabled/interactable afterwards, before falling back to filling
+        # the decoy directly.
         filled = False
+        try:
+            decoy = page.locator("#jp-preview-origin")
+            if decoy.count() > 0:
+                decoy.click(force=True, timeout=5000)
+                page.wait_for_timeout(1000)
+                print("force-clicked #jp-preview-origin", flush=True)
+        except Exception as exc:
+            print(f"force-click on decoy failed: {exc}", flush=True)
+
+        page.screenshot(path=str(args.out / "02_after_decoy_click.png"))
+        (args.out / "02_after_decoy_click.html").write_text(page.content(), encoding="utf-8")
+        try:
+            elements = page.eval_on_selector_all(
+                "input, button, [role='combobox'], [role='listbox'], [role='option']",
+                "els => els.map(e => e.outerHTML.slice(0, 300))",
+            )
+            print(f"--- {len(elements)} input/button/combobox elements after decoy click ---", flush=True)
+            for html in elements:
+                print("  ELEM:", html, flush=True)
+        except Exception as exc:
+            print(f"element dump failed: {exc}", flush=True)
+
         for origin_sel, dest_sel in [
+            ("input[name='jp_preview_origin']:not([disabled])", "input[name='jp_preview_destination']:not([disabled])"),
+            ("input[placeholder='Station name or code']:not([disabled])", None),
             ("input[name='jp_preview_origin']", "input[name='jp_preview_destination']"),
-            ("#jp_preview_origin", "#jp_preview_destination"),
         ]:
             try:
                 origin_input = page.locator(origin_sel)
-                dest_input = page.locator(dest_sel)
-                if origin_input.count() > 0 and dest_input.count() > 0:
-                    origin_input.first.fill("Oxford")
-                    page.wait_for_timeout(1500)
-                    page.screenshot(path=str(args.out / "02_origin_typed.png"))
-                    # try to pick a dropdown suggestion if one appears
-                    try:
-                        page.keyboard.press("ArrowDown")
-                        page.keyboard.press("Enter")
-                    except Exception:
-                        pass
-                    dest_input.first.fill("London Paddington")
-                    page.wait_for_timeout(1500)
-                    try:
-                        page.keyboard.press("ArrowDown")
-                        page.keyboard.press("Enter")
-                    except Exception:
-                        pass
-                    filled = True
-                    print(f"filled origin/destination via {origin_sel}", flush=True)
-                    break
+                if origin_input.count() == 0:
+                    continue
+                origin_input.first.fill("Oxford", timeout=8000)
+                page.wait_for_timeout(1500)
+                page.screenshot(path=str(args.out / "03_origin_typed.png"))
+                try:
+                    page.keyboard.press("ArrowDown")
+                    page.keyboard.press("Enter")
+                except Exception:
+                    pass
+                if dest_sel:
+                    dest_input = page.locator(dest_sel)
+                    if dest_input.count() > 0:
+                        dest_input.first.fill("London Paddington", timeout=8000)
+                        page.wait_for_timeout(1500)
+                        try:
+                            page.keyboard.press("ArrowDown")
+                            page.keyboard.press("Enter")
+                        except Exception:
+                            pass
+                filled = True
+                print(f"filled origin via {origin_sel}", flush=True)
+                break
             except Exception as exc:
                 print(f"selector {origin_sel} failed: {exc}", flush=True)
                 continue
 
-        page.screenshot(path=str(args.out / "03_after_fill.png"))
-        (args.out / "03_after_fill.html").write_text(page.content(), encoding="utf-8")
+        page.screenshot(path=str(args.out / "04_after_fill.png"))
+        (args.out / "04_after_fill.html").write_text(page.content(), encoding="utf-8")
 
         if filled:
             # Try to submit the form / click a search button.
@@ -142,8 +184,8 @@ def main() -> int:
                     continue
 
             page.wait_for_timeout(8000)
-            page.screenshot(path=str(args.out / "04_after_submit.png"))
-            (args.out / "04_after_submit.html").write_text(page.content(), encoding="utf-8")
+            page.screenshot(path=str(args.out / "05_after_submit.png"))
+            (args.out / "05_after_submit.html").write_text(page.content(), encoding="utf-8")
             print("current URL after submit:", page.url, flush=True)
 
         (args.out / "captured_responses.json").write_text(
@@ -152,10 +194,21 @@ def main() -> int:
         )
         print(f"captured {len(captured_responses)} matching responses", flush=True)
 
-        content_lower = page.content().lower()
+        full_content = page.content()
+        content_lower = full_content.lower()
         blocked_markers = ("captcha", "access denied", "are you a robot", "datadome", "cloudflare")
         hits = [m for m in blocked_markers if m in content_lower]
         print("block markers present on final page:", hits or "none", flush=True)
+        # Print surrounding context for each hit so it's clear whether this
+        # is a real block page or just an incidental mention (e.g. a
+        # CDN/CAPTCHA script tag used elsewhere on the site, unrelated to
+        # this specific page load).
+        for marker in hits:
+            idx = content_lower.find(marker)
+            print(
+                f"  context for {marker!r}: ...{full_content[max(0, idx - 150):idx + 150]}...",
+                flush=True,
+            )
 
         browser.close()
 
