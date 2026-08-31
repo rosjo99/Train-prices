@@ -77,6 +77,12 @@ jobs:
           head -200 /tmp/artifacts/page-*.html 2>/dev/null || echo "(none)"
 
   probe-nre:
+    # Superseded for now by probe-nre-deeplink below, which tests
+    # navigating straight to NRE's query-string-encoded journey-planner
+    # URL instead of driving the interactive form. Still runnable on
+    # demand via workflow_dispatch if the interactive flow needs
+    # revisiting later.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
