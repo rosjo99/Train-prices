@@ -147,14 +147,7 @@ def _build_journey_planner_url(travel_date: date) -> str:
     """
     earliest = min(config.TARGET_DEPARTURES)
     hour, minute = earliest.split(":")
-    return config.JOURNEY_PLANNER_URL_TEMPLATE.format(
-        origin_crs=config.ORIGIN_CRS,
-        destination_crs=config.DESTINATION_CRS,
-        leaving_date=travel_date.strftime("%d%m%y"),
-        leaving_hour=hour,
-        leaving_minute=minute,
-        railcard_code=config.RAILCARD_CODE,
-    )
+    return config.build_journey_planner_url(travel_date, hour, minute)
 
 
 def _looks_blocked(status: int | None, url: str | None, content: str | None) -> bool:

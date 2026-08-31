@@ -714,7 +714,26 @@ and compared to the threshold), so both collapse to the same state. All
 
 ### Task 5 — Email notifier
 
-**Create:** `src/notifier.py`, `tests/test_notifier.py`
+**Status: implemented.**
+
+**Created:** `src/notifier.py`, `tests/test_notifier.py`
+**Modified:** `src/models.py` (added `AlertMatch`, per this task's spec —
+travel date + `TrainOption` + the threshold it beat), `src/config.py`
+(added `build_journey_planner_url(travel_date, hour, minute)`, factored
+out of `src/scraper.py`'s private helper so both it and the notifier's
+per-fare email links share one implementation of
+`JOURNEY_PLANNER_URL_TEMPLATE`'s formatting instead of duplicating it).
+
+Two implementation notes beyond the spec below:
+- The subject line reuses `config.ORIGIN_NAME`/`DESTINATION_NAME`
+  ("Oxford" / "London Paddington") rather than the plan's illustrative
+  "Oxford → Paddington" — the spec's example was illustrative, not an
+  exact string to match.
+- Each emailed row links to that specific train's own results page
+  (`config.build_journey_planner_url` anchored at the matched option's
+  `departure_time`), not a single generic link for the whole date.
+
+All 98 tests pass (`python -m pytest -q`), no `float` in the module.
 
 **What the code does**
 

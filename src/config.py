@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from datetime import date
 from decimal import Decimal
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -71,6 +72,25 @@ JOURNEY_PLANNER_URL_TEMPLATE = (
     "&leavingHour={leaving_hour}&leavingMin={leaving_minute}"
     "&adults=1&railcards={railcard_code}%7C1&extraTime=0#O"
 )
+
+
+def build_journey_planner_url(travel_date: date, hour: str, minute: str) -> str:
+    """Build a deep-link journey-planner URL for a specific date/time.
+
+    Single source of truth for JOURNEY_PLANNER_URL_TEMPLATE's formatting,
+    shared by src.scraper (anchored at the earliest of TARGET_DEPARTURES,
+    so one fetch's results cover every target train) and src.notifier
+    (anchored at each alerted train's own departure time, for the
+    email's per-fare link).
+    """
+    return JOURNEY_PLANNER_URL_TEMPLATE.format(
+        origin_crs=ORIGIN_CRS,
+        destination_crs=DESTINATION_CRS,
+        leaving_date=travel_date.strftime("%d%m%y"),
+        leaving_hour=hour,
+        leaving_minute=minute,
+        railcard_code=RAILCARD_CODE,
+    )
 
 # The same-origin API NRE's own journey-planner page calls to fetch fares
 # (confirmed live on 2026-08-31): a request to this host, made by the page
