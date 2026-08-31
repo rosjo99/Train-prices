@@ -1382,6 +1382,31 @@ the current content before retrying, rather than surfacing the first
 conflict as a failure. Any other status still fails immediately, as
 before.
 
+#### Bug fix: a fresh save could appear to "disappear" on refresh
+
+After the 409 fix above, a live report showed a *different* symptom: a
+checkbox showed checked with a "Saved" message, but refreshing the page
+made it look unchecked again. Checking the actual git history proved
+every single write (both directions — marking and unmarking) had
+landed correctly every time; this was never a write bug. The cause was
+on the read side: `loadAndRender()` reads `booked-dates.txt` via
+`fetchRawFile()`, which hits `raw.githubusercontent.com` — a CDN-cached
+endpoint that can lag several minutes behind a very recent commit. A
+refresh moments after your own save can therefore show the CDN's stale,
+pre-save copy, even though the real file on GitHub is already correct.
+(This also explains why unchecking a box could look like it "didn't
+remove the date" — it already did; the same stale read just kept
+showing the old, checked state back.)
+
+Fixed with a new `fetchBookedDatesContent(token)`: when a token is
+present, it reads `booked-dates.txt` through the same authenticated
+Contents API `toggleDate()` already writes through (no CDN in front of
+it, and already `cache: "no-store"` per the fix above) instead of the
+raw endpoint — so your own edits are visible immediately on the very
+next load. A missing or rejected token falls back to the CDN-backed raw
+endpoint, same as before, so anonymous read-only viewing is unaffected
+(and doesn't regress if the token has expired).
+
 ---
 
 ## 5. Out of scope / future work

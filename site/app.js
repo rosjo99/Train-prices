@@ -240,6 +240,28 @@ async function githubGetFile(token) {
   return { content: base64ToUtf8(data.content), sha: data.sha };
 }
 
+async function fetchBookedDatesContent(token) {
+  // Reading booked-dates.txt through the same authenticated Contents
+  // API toggleDate() writes through avoids raw.githubusercontent.com's
+  // CDN, which can lag several minutes behind a very recent commit —
+  // enough that a save you just made can look like it "disappeared" on
+  // the next refresh, even though it landed correctly (this exact
+  // Contents API read is already known-fresh: see githubGetFile's
+  // cache: "no-store"). Anonymous viewers (no token yet) still use the
+  // CDN-backed raw endpoint below, which is fine for read-only browsing
+  // and needs no auth. A broken/expired token falls back to that same
+  // public copy rather than failing the whole page load.
+  if (token) {
+    try {
+      const { content } = await githubGetFile(token);
+      return content;
+    } catch (err) {
+      console.error("authenticated read of booked-dates.txt failed, falling back to the public copy:", err);
+    }
+  }
+  return (await fetchRawFile(BOOKED_DATES_PATH)) || "";
+}
+
 async function fetchRawFile(path) {
   const res = await fetch(`${RAW_BASE}/${path}`, { cache: "no-store" });
   if (res.status === 404) return null; // e.g. price-history.csv before the first successful run ever commits it
@@ -459,17 +481,21 @@ async function loadAndRender() {
   // only ever needed to actually save a change (see toggleDate). This
   // means the table (including prices) shows up immediately for anyone
   // with the link, with editing simply disabled until a token is added.
+  // Once a token IS present, booked state is read through it too (see
+  // fetchBookedDatesContent) so your own edits show up immediately
+  // instead of however long raw.githubusercontent.com's CDN takes to
+  // catch up.
   const token = getToken();
 
   try {
     showStatus("Loading…");
     const [termsResponse, bookedContent, priceHistoryText] = await Promise.all([
       fetch("terms.json").then((r) => r.json()),
-      fetchRawFile(BOOKED_DATES_PATH),
+      fetchBookedDatesContent(token),
       fetchRawFile(PRICE_HISTORY_PATH),
     ]);
 
-    const { dates: bookedSet } = parseBookedContent(bookedContent || "");
+    const { dates: bookedSet } = parseBookedContent(bookedContent);
     const latestByDate = priceHistoryText
       ? latestPriceByDateAndTarget(parseCsv(priceHistoryText))
       : {};
