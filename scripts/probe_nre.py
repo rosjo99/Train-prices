@@ -139,9 +139,51 @@ def main() -> int:
         # origin rather than reacting to it over the network after the tab
         # has already started navigating away.
         context.add_init_script(
-            "window.open = () => { console.log('[probe] window.open suppressed'); return null; };"
+            r"""
+            window.open = () => { console.log('[probe] window.open suppressed'); return null; };
+            try {
+              const origAssign = window.location.assign.bind(window.location);
+              const origReplace = window.location.replace.bind(window.location);
+              window.location.assign = function(url) {
+                if (!String(url).includes('nationalrail.co.uk')) {
+                  console.log('[probe] location.assign suppressed: ' + url);
+                  return;
+                }
+                return origAssign(url);
+              };
+              window.location.replace = function(url) {
+                if (!String(url).includes('nationalrail.co.uk')) {
+                  console.log('[probe] location.replace suppressed: ' + url);
+                  return;
+                }
+                return origReplace(url);
+              };
+            } catch (e) {
+              console.log('[probe] location override failed: ' + e);
+            }
+            """
         )
+
         page = context.new_page()
+
+        # Mitigation #3 (independent of the two JS overrides above):
+        # registered only after our own main page exists, so it never
+        # fires for that intentional page — if a popup/new tab genuinely
+        # opens anyway (e.g. via a plain <a target="_blank"> the browser
+        # handles natively, not through window.open() at all), catch and
+        # close it immediately so it can never affect the main page —
+        # exactly "open in a new tab that I could close/ignore".
+        def _on_new_page(new_page):
+            if new_page is page:
+                return
+            try:
+                print(f"[popup] new page opened: {new_page.url} — closing it", flush=True)
+                new_page.close()
+            except Exception as exc:
+                print(f"[popup] failed to close new page: {exc}", flush=True)
+
+        context.on("page", _on_new_page)
+
         page.on("response", on_response)
         page.on(
             "console",
@@ -218,29 +260,36 @@ def main() -> int:
         except Exception as exc:
             print(f"element dump failed: {exc}", flush=True)
 
-        # Uncheck the pre-checked "Find hotels" affiliate widget BEFORE
-        # touching origin/destination at all. Root-cause finding: the
-        # previous run's uncheck attempt ran AFTER filling+selecting both
-        # origin and destination, and the Booking.com redirect fired
-        # essentially concurrently with the destination selection itself
-        # (half a second apart in the log) — the uncheck code never even
-        # got to print success or failure, meaning the page was likely
-        # already gone (navigated to the blank backstop page) by the time
-        # it ran. The trigger is almost certainly "selecting a destination
-        # while this checkbox is checked", so it must be unchecked first.
-        try:
-            hotels_checkbox = page.locator("input[type='checkbox'][value='find_hotels']")
-            if hotels_checkbox.count() > 0 and hotels_checkbox.first.is_checked():
-                hotels_checkbox.first.uncheck(force=True, timeout=3000)
-                print("unchecked find_hotels checkbox (before filling destination)", flush=True)
-            else:
-                print(
-                    f"find_hotels checkbox not found/not checked "
-                    f"(count={hotels_checkbox.count()})",
-                    flush=True,
-                )
-        except Exception as exc:
-            print(f"unchecking find_hotels failed: {exc}", flush=True)
+        def _try_uncheck_find_hotels(label: str) -> None:
+            """Try several interaction strategies against the custom-styled
+            find_hotels checkbox, since .uncheck() timed out in a previous
+            run (Locator.uncheck also waits to verify the resulting checked
+            state, which a custom checkbox implementation may never satisfy
+            the way it expects) — a plain .click() doesn't wait for that.
+            """
+            try:
+                hotels_checkbox = page.locator("input[type='checkbox'][value='find_hotels']")
+                count = hotels_checkbox.count()
+                if count == 0:
+                    print(f"[{label}] find_hotels checkbox not found", flush=True)
+                    return
+                if not hotels_checkbox.first.is_checked():
+                    print(f"[{label}] find_hotels checkbox already unchecked", flush=True)
+                    return
+                try:
+                    hotels_checkbox.first.click(force=True, timeout=3000)
+                    print(f"[{label}] clicked find_hotels checkbox (uncheck attempt)", flush=True)
+                except Exception as exc:
+                    print(f"[{label}] clicking find_hotels checkbox failed: {exc}", flush=True)
+                    return
+                if not hotels_checkbox.first.is_checked():
+                    print(f"[{label}] find_hotels checkbox confirmed unchecked", flush=True)
+                else:
+                    print(f"[{label}] find_hotels checkbox still checked after click", flush=True)
+            except Exception as exc:
+                print(f"[{label}] find_hotels handling error: {exc}", flush=True)
+
+        _try_uncheck_find_hotels("before-fill")
 
         # Confirmed via the previous probe's element dump: the decoy click
         # opens a real modal with #jp-origin / #jp-destination (both
@@ -270,15 +319,8 @@ def main() -> int:
             print(f"filling #jp-origin/#jp-destination failed: {exc}", flush=True)
 
         # Re-check right after filling too, in case the destination
-        # selection re-renders the widget and re-checks it (a plausible
-        # explanation if the first uncheck didn't stick).
-        try:
-            hotels_checkbox = page.locator("input[type='checkbox'][value='find_hotels']")
-            if hotels_checkbox.count() > 0 and hotels_checkbox.first.is_checked():
-                hotels_checkbox.first.uncheck(force=True, timeout=3000)
-                print("unchecked find_hotels checkbox (again, after filling)", flush=True)
-        except Exception as exc:
-            print(f"second unchecking find_hotels failed: {exc}", flush=True)
+        # selection re-renders the widget and re-checks it.
+        _try_uncheck_find_hotels("after-fill")
 
         # Railcard selection (per user request: 16-25 Railcard specifically).
         try:
