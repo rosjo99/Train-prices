@@ -102,14 +102,48 @@ evasion escalation. If Plan B is needed, stop and report.
 dates. Those are **travel dates**, not run dates — alerting on the
 morning of a 07:25 departure is useless.
 
-Decision: each run enumerates candidate travel dates from **tomorrow**
-through **today + `HORIZON_DAYS`** (default 14, env-configurable), keeps
-those passing `is_checkable_day()`, and checks each one. Typically ~6
-dates per run.
+Decision (per explicit user instruction, superseding this plan's
+original 14-day-horizon draft): each run enumerates **every** candidate
+travel date from **tomorrow** through the **end of the last known school
+term** (`term_dates.LAST_KNOWN_DATE`, i.e. `max(t.end for t in TERMS)` —
+currently 2027-07-08), keeps those passing `is_checkable_day()`, and
+checks every one of them, every day.
 
 This also subsumes the "running on a non-term / non-Tue-Thu-Fri day"
 edge case: during the summer holidays the candidate list is empty and the
 run is a clean no-op (log + exit 0, no email, no browser launched).
+
+**Volume implication, flagged for visibility rather than left implicit:**
+checked live against the actual term dates (see §1.4 below), a run on
+the first day of Autumn Term 2026 has **102 candidate dates** to check
+(and ~39 within just that one term). At an estimated 15-25s per date
+(browser navigation + a randomised inter-request pause), a full run
+early in the year takes on the order of 30-45 minutes and makes 100+
+sequential automated requests to Trainline from the same IP, once a
+day, every day. This directly compounds the DataDome IP-reputation risk
+already identified as the project's top risk in §1.3 — a burst of ~100
+requests is a much stronger bot signal than the ~6 requests the
+original 14-day design would have made. The user has explicitly chosen
+this tradeoff (fresh data on every remaining date, checked daily) over
+the lighter-weight alternative; it is documented here so a future
+DataDome block is understood as a consequence of this choice, not a bug.
+Mitigation stays the same as §1.3: self-hosted runner with a residential
+IP if GitHub-hosted runners get blocked. No proxies/stealth/CAPTCHA
+solvers.
+
+### 1.4 Checkable-date counts (computed, not estimated)
+
+Computed directly from the `CLAUDE.md` term data with the same weekday
+and exclusion rules `term_dates.py` implements:
+
+| From | Checkable dates remaining |
+| --- | --- |
+| 2026-09-01 (whole year) | 102 |
+| Just Autumn Term 2026 | 39 |
+
+These numbers should be re-verified with
+`python -m src.term_dates --list \| wc -l` once Task 2 lands, and used
+to size the workflow timeout in Task 7.
 
 ---
 
@@ -177,8 +211,10 @@ time; pin exactly, no ranges.)
   16-25 eligibility window as of the target travel dates. Add a comment
   that this needs revisiting if the tool is still running past 2028.
 - `LONDON = ZoneInfo("Europe/London")`
-- `HORIZON_DAYS` from env `HORIZON_DAYS`, default `14`, must parse as an
-  int in 1..90 or raise `ConfigError`.
+- `MAX_DATES` from env `MAX_DATES`, optional, default `None` (no cap) —
+  when set, must parse as a positive int; used only to cap the candidate
+  list for manual/debug `workflow_dispatch` runs, never by the scheduled
+  cron run. Raise `ConfigError` if set but not a positive int.
 - `DRY_RUN` from env `DRY_RUN` — truthy values `1/true/yes` (case
   insensitive).
 - `get_secrets()` returning a frozen dataclass with `resend_api_key`,
@@ -196,7 +232,7 @@ time; pin exactly, no ranges.)
 - `python -c "import src.config, src.models"` succeeds with no env vars set (import must not require secrets).
 - `pytest` runs and collects 0 tests without error.
 - `get_secrets()` with none set raises `ConfigError` naming all three vars.
-- `HORIZON_DAYS=0` and `HORIZON_DAYS=abc` both raise `ConfigError`.
+- `MAX_DATES=0` and `MAX_DATES=abc` both raise `ConfigError`; `MAX_DATES` unset → `None`.
 
 **Edge cases**
 - Import-time must never read secrets — only `get_secrets()` does.
@@ -244,6 +280,12 @@ Functions:
 - `is_checkable_day(d: date) -> bool` — `d.weekday() in CHECK_WEEKDAYS and is_in_term(d)`.
 - `checkable_dates(start: date, end: date) -> list[date]` — inclusive
   both ends, ascending; returns `[]` if `end < start`.
+- `LAST_KNOWN_DATE: date = max(t.end for t in TERMS)` — module-level
+  constant, the end of the last term currently in `TERMS`. This is what
+  the orchestrator (Task 6) uses as the upper bound when it checks every
+  remaining date to the end of the school year; it advances automatically
+  as new terms are added to `TERMS` each year, with no other code change
+  needed.
 - `_validate()` run at import: every term has `start <= end`; every
   excluded range is inside its term and has `start <= end`; terms do not
   overlap each other. Raise `ValueError` naming the offending term.
@@ -275,6 +317,7 @@ Functions:
 - Boundary dates of every excluded range are themselves excluded
   (inclusive on both ends) — test 2026-10-19 and 2026-10-30 directly.
 - `checkable_dates` with `end < start` returns `[]`.
+- `LAST_KNOWN_DATE == date(2027, 7, 8)` (the Summer 2027 term end).
 - `python -m src.term_dates --list` exits 0.
 
 **Edge cases**
@@ -503,8 +546,11 @@ add proxies, CAPTCHA solvers, or stealth plugins. Escalate to Plan B
 
 `main() -> int`:
 1. Compute `today = datetime.now(config.LONDON).date()`.
-2. `candidates = term_dates.checkable_dates(today + 1 day, today + HORIZON_DAYS)`.
-3. If empty → log `"No checkable travel dates in the next N days — nothing to do."`, return `0`. **No browser launch, no email.**
+2. `candidates = term_dates.checkable_dates(today + 1 day, term_dates.LAST_KNOWN_DATE)`
+   — every remaining checkable date to the end of the school year, not a
+   fixed horizon. If `config.MAX_DATES` is set (debug/manual runs only),
+   truncate to the first `MAX_DATES` candidates.
+3. If empty → log `"No checkable travel dates remaining this school year — nothing to do."`, return `0`. **No browser launch, no email.**
 4. Load secrets *before* scraping, so a misconfiguration fails fast (skip
    in `DRY_RUN`).
 5. For each candidate date, in ascending order, with a 5–15s randomised
@@ -559,7 +605,12 @@ monkeypatching `datetime`)
 **Edge cases**
 - Run at 23:50 UTC in winter vs summer — assert `today` is derived from
   Europe/London (test by injecting a `datetime` near midnight UTC).
-- `HORIZON_DAYS=1` → exactly one candidate (tomorrow) if it qualifies.
+- `today` set to the day before `term_dates.LAST_KNOWN_DATE` → exactly
+  one candidate remains, if it qualifies.
+- `MAX_DATES=1` with many real candidates → exactly one date checked.
+- Today the first day of Autumn Term 2026 → candidate list has 102
+  entries (regression guard on the "check everything to year end" scope,
+  matching §1.4 of the plan).
 - Non-GBP currency → excluded from matches, warning logged.
 - Duplicate matches for the same date+time → de-duplicate before emailing.
 
@@ -584,9 +635,9 @@ on:
         description: "Print the email instead of sending it"
         type: boolean
         default: false
-      horizon_days:
-        description: "Days ahead to check"
-        default: "14"
+      max_dates:
+        description: "Cap the number of dates checked (debug only, leave blank for no cap)"
+        default: ""
 concurrency:
   group: train-price-check
   cancel-in-progress: false
@@ -595,7 +646,11 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Every remaining term-time Tue/Thu/Fri is checked on every run (see
+    # plan §2.2) — up to ~100 dates early in a term at an estimated
+    # 15-25s/date. 90 minutes gives headroom over the ~30-45 min estimate;
+    # tighten this once real run durations are observed.
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -611,7 +666,7 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
           ALERT_EMAIL_FROM: ${{ secrets.ALERT_EMAIL_FROM }}
-          HORIZON_DAYS: ${{ inputs.horizon_days || '14' }}
+          MAX_DATES: ${{ inputs.max_dates || '' }}
           DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
         run: python -m src.main
       - name: Upload debug artifacts

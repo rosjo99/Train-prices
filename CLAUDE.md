@@ -81,10 +81,20 @@ Tuesday, Thursday or Friday inside school term time are checked.
 
 ## Which dates get checked
 The gate applies to **travel dates**, not the day the job happens to run.
-Each daily run enumerates candidate travel dates from tomorrow through
-today + `HORIZON_DAYS` (default 14), keeps those passing
-`is_checkable_day()`, and checks each. Outside term time the candidate
-list is empty and the run is a clean no-op — no browser launch, no email.
+Each daily run enumerates **every** candidate travel date from tomorrow
+through the end of the last known school term (currently Thu 8 Jul
+2027), keeps those passing `is_checkable_day()`, and checks every one of
+them — not just a short lookahead window. Outside term time the
+candidate list is empty and the run is a clean no-op — no browser
+launch, no email.
+
+This is checked in full every day by design, so prices are always fresh
+for every remaining date, at the cost of a much larger daily workload:
+early in a term this is over 100 dates checked per run (~30-45 minutes,
+100+ automated requests to Trainline from one IP, once a day). This
+compounds the DataDome IP-reputation risk noted in Tech decisions above
+— see `docs/plans/001-train-price-alert.md` §2.2/§1.4 for the numbers
+and the accepted tradeoff.
 
 ## Term dates (only check Tue/Thu/Fri that fall within these ranges)
 
