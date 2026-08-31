@@ -394,7 +394,11 @@ def main() -> int:
             except Exception as exc:
                 print(f"clicking #button-jp failed: {exc}", flush=True)
 
-            page.wait_for_timeout(8000)
+            # Give the results more time: the previous run reached this
+            # point without being hijacked (a first!) but found zero prices
+            # after only an 8s wait — plausibly not enough time for the
+            # journey-search round trip plus render.
+            page.wait_for_timeout(15000)
             page.screenshot(path=str(args.out / "05_after_submit.png"))
             (args.out / "05_after_submit.html").write_text(page.content(), encoding="utf-8")
             print("current URL after submit:", page.url, flush=True)
@@ -412,6 +416,26 @@ def main() -> int:
             # right result-card selector.
             price_matches = re.findall(r"£\s?\d+(?:\.\d{2})?", page.content())
             print(f"£-price-shaped strings found on results page: {price_matches[:20]}", flush=True)
+
+            # The raw HTML head alone runs to hundreds of script tags (the
+            # workflow's log printer only shows the first 100 lines of each
+            # HTML file, which never reaches the body) — print the page's
+            # actual VISIBLE TEXT directly here instead, bypassing that
+            # truncation entirely, plus a targeted scan for departure-time-
+            # shaped strings and station names near them.
+            try:
+                body_text = page.inner_text("body")
+            except Exception as exc:
+                body_text = ""
+                print(f"could not read body inner_text: {exc}", flush=True)
+            print(f"body inner_text length: {len(body_text)}", flush=True)
+            print(f"body inner_text (first 3000 chars):\n{body_text[:3000]}", flush=True)
+            print(f"body inner_text (last 2000 chars):\n{body_text[-2000:]}", flush=True)
+            time_matches = re.findall(r"\b\d{2}:\d{2}\b", body_text)
+            print(f"HH:MM-shaped strings in body text: {time_matches[:30]}", flush=True)
+            for name in ("Oxford", "Paddington"):
+                count = body_text.count(name)
+                print(f"'{name}' appears {count} time(s) in visible body text", flush=True)
 
         (args.out / "captured_responses.json").write_text(
             json.dumps(captured_responses, indent=2, default=str)[:200000],
