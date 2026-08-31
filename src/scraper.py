@@ -107,11 +107,9 @@ def _ensure_logging_configured() -> None:
 def _build_results_url(travel_date: date) -> str:
     """Build the deep-linked results URL for `travel_date` at 07:00 local.
 
-    Uses config.RESULTS_URL_TEMPLATE, which is itself an unverified
-    hypothesis pending live confirmation (see its docstring comment in
-    src/config.py) — this will raise a plain TypeError/AttributeError from
-    str.format if ORIGIN_URN/DESTINATION_URN are still None, which is
-    expected and correct until a real discovery run fills them in.
+    Uses config.RESULTS_URL_TEMPLATE with the confirmed ORIGIN_URN/
+    DESTINATION_URN/RAILCARD_CODE (see their comments in src/config.py for
+    how and when they were confirmed, and what's still unconfirmed).
     """
     outward = datetime.combine(travel_date, datetime.min.time()).replace(
         hour=7, minute=0

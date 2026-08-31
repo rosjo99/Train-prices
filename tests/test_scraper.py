@@ -196,8 +196,9 @@ def install_fake_playwright(monkeypatch: pytest.MonkeyPatch, chromium: ScenarioC
 
 @pytest.fixture(autouse=True)
 def _set_route_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Fill in enough config for _build_results_url to render, since the
-    real ORIGIN_URN/DESTINATION_URN are (correctly) still None.
+    """Override config with fixed test URNs, independent of whatever real
+    values config.ORIGIN_URN/DESTINATION_URN currently hold, so these tests
+    don't depend on (or break when someone updates) the real route config.
     """
     monkeypatch.setattr(scraper.config, "ORIGIN_URN", "urn:trainline:generic:loc:1234")
     monkeypatch.setattr(scraper.config, "DESTINATION_URN", "urn:trainline:generic:loc:5678")

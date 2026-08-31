@@ -25,11 +25,17 @@ class ConfigError(Exception):
 ORIGIN_NAME = "Oxford"
 DESTINATION_NAME = "London Paddington"
 
-# TODO(task-3): fill in with the real station URNs discovered by driving
-# the Trainline search form once, per plan docs/plans/001-train-price-alert.md
-# Task 3.
-ORIGIN_URN: str | None = None
-DESTINATION_URN: str | None = None
+# Confirmed live on 2026-08-31 by fetching
+# https://www.thetrainline.com/stations/oxford and .../stations/london-paddington
+# directly (plain HTTP GET — these static pages are not DataDome-gated) and
+# reading the embedded `"station":{"code": "urn:trainline:...", "name": ...}`
+# object, which named "Oxford" / "London Paddington" respectively. Then
+# cross-checked by requesting RESULTS_URL_TEMPLATE with these values (again
+# plain HTTP, no browser) and confirming the server-rendered page title read
+# "Search Results" with "Oxford" correctly present in the embedded route
+# state — i.e. the site accepted and correctly resolved both URNs.
+ORIGIN_URN: str | None = "urn:trainline:generic:loc:OXF3115gb"
+DESTINATION_URN: str | None = "urn:trainline:generic:loc:PAD3087gb"
 
 TARGET_DEPARTURES: tuple[str, ...] = ("07:25", "07:30")
 
@@ -37,9 +43,17 @@ TARGET_DEPARTURES: tuple[str, ...] = ("07:25", "07:30")
 
 PRICE_THRESHOLD = Decimal("10.00")
 
-# Hypothesis only — Task 3 must confirm this is the correct Trainline
-# railcard code for the 16-25 Railcard before it's relied on.
-RAILCARD_CODE = "YNG"
+# Confirmed live on 2026-08-31 (same plain-HTTP check as the URNs above):
+# passing railcards[]=16-25|1 in the results URL is accepted and echoed back
+# verbatim in the server-rendered route state as "railcards":["16-25|1"] —
+# "YNG" (the original hypothesis) does not appear anywhere in that response.
+# NOT YET FULLY CONFIRMED: whether "16-25" actually causes the 16-25
+# discount to be applied to the fare, since that only shows up in the
+# journey-search XHR response, which requires a real, DataDome-cleared
+# browser session (src.scraper) — this sandbox cannot make that request.
+# A GitHub Actions run (real internet access) is needed to confirm the
+# discount is genuinely applied before this is fully trusted.
+RAILCARD_CODE = "16-25"
 
 # Date of birth used for the passenger, chosen to sit inside the 16-25
 # railcard eligibility window (16th to 30th birthday) as of the target
@@ -48,18 +62,14 @@ RAILCARD_CODE = "YNG"
 # out of the 16-25 window.
 PASSENGER_DOB = "2003-01-01"
 
-# UNVERIFIED HYPOTHESIS (Task 3) — pending live confirmation against the
-# real site. This is the plan's best guess at the deep-linked results-page
-# URL shape (see docs/plans/001-train-price-alert.md Task 3), written as a
-# format string against ORIGIN_URN/DESTINATION_URN/RAILCARD_CODE/
-# PASSENGER_DOB above. It will not render successfully until ORIGIN_URN and
-# DESTINATION_URN are filled in by a real discovery run (interactively
-# driving thetrainline.com's search form) — that discovery could not be
-# done in this environment (no outbound network access to the live site)
-# and is deferred to a follow-up commit once it's been confirmed live.
-# Do not rely on this template for anything beyond a starting point until
-# that confirmation lands and this comment is updated with the date it was
-# verified.
+# Confirmed live on 2026-08-31: this exact query-string shape, with the
+# URNs/railcard code above substituted in, was fetched with a plain HTTP
+# GET (no browser) and the server rendered a "Search Results" page with
+# Oxford/London Paddington correctly recognised as the origin/destination
+# in the embedded route state. NOT YET FULLY CONFIRMED: whether this
+# produces the expected fares and railcard discount in the journey-search
+# XHR specifically (that response is only available after a real,
+# DataDome-cleared browser session — see RAILCARD_CODE's comment above).
 RESULTS_URL_TEMPLATE = (
     "https://www.thetrainline.com/book/results"
     "?origin={origin_urn}&destination={destination_urn}"
