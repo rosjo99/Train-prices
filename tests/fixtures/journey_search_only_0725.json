@@ -1,0 +1,29 @@
+{
+  "_note": "Hand-edited: a single 07:25 journey, no 07:30 at all (a timetable-change scenario), missing arrival timetable, and a railcard price of exactly 999 pence to exercise Decimal('9.99').",
+  "outwardJourneys": [
+    {
+      "id": 1,
+      "timetable": {
+        "scheduled": {
+          "departure": "2026-09-08T07:25:00+01:00",
+          "arrival": null
+        }
+      },
+      "legs": [{}],
+      "fares": [
+        {
+          "typeDescription": "Advance Single",
+          "totalPrice": 999,
+          "undiscountedPrices": {"adult": 1500, "child": 750},
+          "railcardFares": [
+            {
+              "code": "YNG",
+              "count": 1,
+              "prices": {"adult": 999, "child": 0}
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

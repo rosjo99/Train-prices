@@ -1,0 +1,108 @@
+name: Discover fixture (manual dev tool)
+
+# Exploratory probe scripts only (scripts/probe_nre.py,
+# scripts/probe_nre_deeplink.py) — throwaway dev tools used to figure out
+# whether/how National Rail Enquiries could be scraped at all. Both
+# investigations are now complete and their findings are implemented in
+# src/scraper.py (see docs/plans/001-train-price-alert.md §1.4), so
+# neither job here runs automatically anymore; both are workflow_dispatch
+# only, kept around only in case the interactive-form or deep-link
+# approach needs revisiting later. The one job that still matters for
+# ongoing work — capturing a real production fixture via
+# scripts/capture_fixture.py — lives in its own separate workflow,
+# capture-fixture.yml, specifically so dispatching it doesn't also
+# re-run these probes (they used to share this file and a single
+# workflow_dispatch trigger fired all three jobs at once).
+
+on:
+  # workflow_dispatch alone won't work until this file exists on the
+  # default branch (GitHub only indexes workflow_dispatch workflows from
+  # the default branch), which this project hasn't merged to yet. Trigger
+  # on push to this branch instead, scoped to files that would actually
+  # change discovery output, so it doesn't fire on unrelated commits.
+  push:
+    branches:
+      - claude/train-price-alert-setup-ks7rfg
+    paths:
+      - ".github/workflows/discover-fixture.yml"
+      - "scripts/probe_nre.py"
+      - "scripts/probe_nre_deeplink.py"
+  workflow_dispatch:
+
+jobs:
+  probe-nre:
+    # Superseded by probe-nre-deeplink below, which tests navigating
+    # straight to NRE's query-string-encoded journey-planner URL instead
+    # of driving the interactive form. Kept only in case the interactive
+    # flow needs revisiting later.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: playwright install --with-deps chromium
+      - name: Probe National Rail Enquiries
+        run: |
+          # No --date: the script defaults to tomorrow (Europe/London),
+          # computed fresh on every run. A hardcoded date here would
+          # eventually fall into the past as this workflow keeps
+          # re-running across real days while iterating.
+          python scripts/probe_nre.py --out /tmp/nre_probe
+      - name: Print captured responses
+        if: always()
+        run: |
+          echo "=== captured_responses.json ==="
+          cat /tmp/nre_probe/captured_responses.json 2>/dev/null || echo "(none)"
+      - name: Print page HTML snapshots (truncated)
+        if: always()
+        run: |
+          for f in /tmp/nre_probe/*.html; do
+            echo "=== $f (first 100 lines) ==="
+            head -100 "$f" 2>/dev/null
+          done
+      - name: Upload probe artifacts (screenshots etc.)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nre-probe-${{ github.run_id }}
+          path: /tmp/nre_probe/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  probe-nre-deeplink:
+    # Confirmed working (docs/plans/001-train-price-alert.md §1.4) and
+    # implemented in src/scraper.py — this investigation is done. Kept
+    # workflow_dispatch-only in case the deep-link approach ever needs
+    # re-probing (e.g. NRE changes the URL format or response schema).
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: playwright install --with-deps chromium
+      - name: Probe NRE deep-link URL
+        run: |
+          python scripts/probe_nre_deeplink.py --out /tmp/nre_deeplink
+      - name: Print captured responses
+        if: always()
+        run: |
+          echo "=== captured_responses.json ==="
+          cat /tmp/nre_deeplink/captured_responses.json 2>/dev/null || echo "(none)"
+      - name: Upload probe artifacts (screenshots etc.)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nre-deeplink-probe-${{ github.run_id }}
+          path: /tmp/nre_deeplink/
+          retention-days: 7
+          if-no-files-found: ignore

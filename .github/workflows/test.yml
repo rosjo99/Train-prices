@@ -1,0 +1,20 @@
+name: Tests
+
+# Runs the unit test suite on every push/PR — no secrets, no Playwright
+# browsers needed, since src.scraper's tests all mock Playwright's sync
+# API rather than launching a real browser (see tests/test_scraper.py).
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q

@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Booked train dates — Oxford to London Paddington</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Booked dates: Oxford &rarr; London Paddington</h1>
+    <p>
+      Tick a date once you've booked a ticket for it — the price-check tool
+      will stop checking it. Unticking makes it check that date again.
+      Changes save straight away, there's nothing else to do.
+    </p>
+  </header>
+
+  <section id="token-setup">
+    <div id="token-missing">
+      <p>
+        You can already see every date and its latest price below. To
+        actually tick a box, this page needs a one-time GitHub access
+        token — see the
+        <a href="https://github.com/rosjo99/Train-prices#booked-dates-website" target="_blank" rel="noopener">
+          step-by-step instructions
+        </a>
+        for how to create one (it takes about a minute).
+      </p>
+      <label for="token-input">Paste your token here:</label>
+      <input type="password" id="token-input" placeholder="github_pat_..." autocomplete="off" />
+      <button id="token-save">Save token</button>
+      <p class="hint">
+        This is stored only in this browser (never sent anywhere except
+        directly to github.com) — you'll need to paste it again if you use
+        a different device or browser.
+      </p>
+    </div>
+    <div id="token-present" hidden>
+      <span>&#9989; Token saved on this device.</span>
+      <button id="token-clear">Remove token</button>
+    </div>
+  </section>
+
+  <section id="status" role="status" aria-live="polite"></section>
+
+  <main id="dates-container">
+    <p id="loading">Loading dates&hellip;</p>
+  </main>
+
+  <footer>
+    <p id="generated-at"></p>
+  </footer>
+
+  <script src="app.js" defer></script>
+</body>
+</html>
