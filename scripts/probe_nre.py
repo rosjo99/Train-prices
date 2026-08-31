@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import date
 from pathlib import Path
@@ -129,64 +130,54 @@ def main() -> int:
         except Exception as exc:
             print(f"element dump failed: {exc}", flush=True)
 
-        for origin_sel, dest_sel in [
-            ("input[name='jp_preview_origin']:not([disabled])", "input[name='jp_preview_destination']:not([disabled])"),
-            ("input[placeholder='Station name or code']:not([disabled])", None),
-            ("input[name='jp_preview_origin']", "input[name='jp_preview_destination']"),
-        ]:
-            try:
-                origin_input = page.locator(origin_sel)
-                if origin_input.count() == 0:
-                    continue
-                origin_input.first.fill("Oxford", timeout=8000)
-                page.wait_for_timeout(1500)
-                page.screenshot(path=str(args.out / "03_origin_typed.png"))
-                try:
-                    page.keyboard.press("ArrowDown")
-                    page.keyboard.press("Enter")
-                except Exception:
-                    pass
-                if dest_sel:
-                    dest_input = page.locator(dest_sel)
-                    if dest_input.count() > 0:
-                        dest_input.first.fill("London Paddington", timeout=8000)
-                        page.wait_for_timeout(1500)
-                        try:
-                            page.keyboard.press("ArrowDown")
-                            page.keyboard.press("Enter")
-                        except Exception:
-                            pass
-                filled = True
-                print(f"filled origin via {origin_sel}", flush=True)
-                break
-            except Exception as exc:
-                print(f"selector {origin_sel} failed: {exc}", flush=True)
-                continue
+        # Confirmed via the previous probe's element dump: the decoy click
+        # opens a real modal with #jp-origin / #jp-destination (both
+        # enabled, role=combobox with a live results list), single/return/
+        # open radios (name="jp-ticket-type", "single" checked by default —
+        # matches our need), an "Add Railcard" button, and the real submit
+        # button #button-jp labeled "Get times and prices" (strong signal
+        # NRE shows fares directly, not just timetables).
+        try:
+            origin_input = page.locator("#jp-origin")
+            origin_input.fill("Oxford", timeout=8000)
+            page.wait_for_timeout(1200)
+            page.keyboard.press("ArrowDown")
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(500)
+
+            dest_input = page.locator("#jp-destination")
+            dest_input.fill("London Paddington", timeout=8000)
+            page.wait_for_timeout(1200)
+            page.keyboard.press("ArrowDown")
+            page.keyboard.press("Enter")
+            page.wait_for_timeout(500)
+
+            filled = True
+            print("filled #jp-origin and #jp-destination", flush=True)
+        except Exception as exc:
+            print(f"filling #jp-origin/#jp-destination failed: {exc}", flush=True)
 
         page.screenshot(path=str(args.out / "04_after_fill.png"))
         (args.out / "04_after_fill.html").write_text(page.content(), encoding="utf-8")
 
         if filled:
-            # Try to submit the form / click a search button.
-            for btn_sel in (
-                "button[type='submit']",
-                "button:has-text('Search')",
-                "button:has-text('Plan')",
-                "#jp-form-preview button",
-            ):
-                try:
-                    btn = page.locator(btn_sel)
-                    if btn.count() > 0:
-                        btn.first.click(timeout=5000)
-                        print(f"clicked submit via {btn_sel}", flush=True)
-                        break
-                except Exception:
-                    continue
+            try:
+                page.locator("#button-jp").click(timeout=5000)
+                print("clicked #button-jp (Get times and prices)", flush=True)
+            except Exception as exc:
+                print(f"clicking #button-jp failed: {exc}", flush=True)
 
             page.wait_for_timeout(8000)
             page.screenshot(path=str(args.out / "05_after_submit.png"))
             (args.out / "05_after_submit.html").write_text(page.content(), encoding="utf-8")
             print("current URL after submit:", page.url, flush=True)
+
+            # Look for anything price-shaped (£ followed by digits) anywhere
+            # in the resulting page — a quick, format-agnostic signal for
+            # whether fares actually rendered, independent of guessing the
+            # right result-card selector.
+            price_matches = re.findall(r"£\s?\d+(?:\.\d{2})?", page.content())
+            print(f"£-price-shaped strings found on results page: {price_matches[:20]}", flush=True)
 
         (args.out / "captured_responses.json").write_text(
             json.dumps(captured_responses, indent=2, default=str)[:200000],

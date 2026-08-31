@@ -32,6 +32,11 @@ on:
 
 jobs:
   discover:
+    # Trainline is confirmed blocked by DataDome on GitHub-hosted runners
+    # (two independent runs, both blocked immediately) — no need to keep
+    # re-running this on every push while iterating on the NRE probe below.
+    # Still runnable on demand via workflow_dispatch if needed later.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
