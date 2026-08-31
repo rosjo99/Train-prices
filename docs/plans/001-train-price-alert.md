@@ -779,8 +779,29 @@ All 98 tests pass (`python -m pytest -q`), no `float` in the module.
 
 ### Task 6 — Orchestrator, booked-date exclusion, and alert decision
 
-**Create:** `src/main.py`, `src/booked_dates.py`, `booked-dates.txt`,
+**Status: implemented.**
+
+**Created:** `src/main.py`, `src/booked_dates.py`, `booked-dates.txt`,
 `tests/test_main.py`, `tests/test_booked_dates.py`
+
+Two implementation notes beyond the spec below:
+- `evaluate()` returns `tuple[list[AlertMatch], bool]`, not the single
+  `list[AlertMatch]` this task's signature sketch shows — a plain list
+  can't also carry the `railcard_unconfirmed` flag step 7 needs, so both
+  are returned explicitly rather than smuggling a flag onto the list.
+- `railcard_unconfirmed` suppresses the **entire** run's email, not just
+  the affected date — if any priced fare anywhere in the run couldn't
+  have its railcard confirmed, no email is sent at all even if other
+  dates have genuinely-confirmed matches, per CLAUDE.md's "a wrong price
+  is worse than a missed alert."
+
+Confirmed against a real (if network-less) run in this environment:
+`DRY_RUN=1 MAX_DATES=1 python -m src.main` correctly drove the whole
+pipeline down to a per-date scraper failure (no Chromium binary
+installed in this sandbox) being caught, logged, and surfaced as exit
+code 1 with "all 1 candidate date(s) failed" — the intended failure
+path, not a crash. All 128 tests pass (`python -m pytest -q`), no
+`float` in `src/main.py` or `src/booked_dates.py`.
 
 **What the code does**
 

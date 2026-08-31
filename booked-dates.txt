@@ -1,0 +1,6 @@
+# Dates you've already booked a ticket for, one per line as YYYY-MM-DD.
+# The tool will stop checking these dates — no code changes needed.
+# To add one: click the pencil (edit) icon on this file on github.com,
+# add a line, and commit. Lines starting with # are ignored, so this
+# example below does nothing until you remove the leading #.
+# 2026-09-08
