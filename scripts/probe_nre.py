@@ -45,6 +45,30 @@ def main() -> int:
                 entry["body"] = "(unreadable)"
         captured_responses.append(entry)
 
+    # The previous probe run got hijacked mid-flow into a Booking.com hotel
+    # search — NRE's page loads third-party ad/affiliate scripts (DoubleClick,
+    # OpenX, a "RAMP" ad-management script from intergient.com, a
+    # pre-checked "Find hotels" affiliate widget) and one of them fired an
+    # uncontrolled top-level redirect away from the site entirely. Blocking
+    # known ad/tracking domains outright avoids this — this has nothing to
+    # do with NRE's own bot protection (which never triggered: block markers
+    # came back "none" on every run) and everything to do with not letting
+    # unrelated ad scripts hijack the page. Standard, non-deceptive scraper
+    # practice, same as an ad-blocking browser extension.
+    AD_DOMAIN_KEYWORDS = (
+        "doubleclick.net", "googlesyndication.com", "google.com/ccm",
+        "openx.net", "booking.com", "luckyorange.net", "confiant-integrations",
+        "adnxs.com", "taboola.com", "outbrain.com", "criteo.com",
+        "amazon-adsystem.com", "pubmatic.com", "rubiconproject.com",
+        "casalemedia.com", "adsrvr.org", "intergient.com",
+    )
+
+    def _route_handler(route):
+        if any(kw in route.request.url for kw in AD_DOMAIN_KEYWORDS):
+            route.abort()
+        else:
+            route.continue_()
+
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
@@ -59,6 +83,7 @@ def main() -> int:
                 "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
             ),
         )
+        context.route("**/*", _route_handler)
         page = context.new_page()
         page.on("response", on_response)
 
@@ -157,6 +182,79 @@ def main() -> int:
         except Exception as exc:
             print(f"filling #jp-origin/#jp-destination failed: {exc}", flush=True)
 
+        # Defensively uncheck the pre-checked "Find hotels" affiliate
+        # widget seen in the previous element dump, in case route-blocking
+        # doesn't cover every path to it.
+        try:
+            hotels_checkbox = page.locator("input[type='checkbox'][value='find_hotels']")
+            if hotels_checkbox.count() > 0 and hotels_checkbox.first.is_checked():
+                hotels_checkbox.first.uncheck(force=True, timeout=3000)
+                print("unchecked find_hotels checkbox", flush=True)
+        except Exception as exc:
+            print(f"unchecking find_hotels failed: {exc}", flush=True)
+
+        # Railcard selection (per user request: 16-25 Railcard specifically).
+        try:
+            add_railcard_btn = page.locator("button[aria-label='Add railcard']")
+            if add_railcard_btn.count() > 0:
+                add_railcard_btn.first.click(timeout=5000)
+                page.wait_for_timeout(1000)
+                print("clicked Add Railcard", flush=True)
+                page.screenshot(path=str(args.out / "03a_railcard_panel.png"))
+                (args.out / "03a_railcard_panel.html").write_text(page.content(), encoding="utf-8")
+                elements = page.eval_on_selector_all(
+                    "input, button, [role='option'], label",
+                    "els => els.map(e => e.outerHTML.slice(0, 300))",
+                )
+                print(f"--- {len(elements)} elements after clicking Add Railcard ---", flush=True)
+                for html in elements:
+                    print("  RAILCARD_ELEM:", html, flush=True)
+
+                selected = False
+                for sel in (
+                    "text=16-25 Railcard",
+                    "label:has-text('16-25')",
+                    "button:has-text('16-25')",
+                    "[role='option']:has-text('16-25')",
+                    "text=16-25",
+                ):
+                    try:
+                        opt = page.locator(sel)
+                        if opt.count() > 0:
+                            opt.first.click(timeout=5000)
+                            print(f"selected 16-25 railcard via {sel!r}", flush=True)
+                            selected = True
+                            page.wait_for_timeout(500)
+                            break
+                    except Exception:
+                        continue
+                if not selected:
+                    print("could not find a 16-25 railcard option to click", flush=True)
+
+                # Look for a confirm/apply/done button to close the panel.
+                for sel in (
+                    "button:has-text('Apply')",
+                    "button:has-text('Done')",
+                    "button:has-text('Add')",
+                    "button:has-text('Confirm')",
+                ):
+                    try:
+                        btn = page.locator(sel)
+                        if btn.count() > 0:
+                            btn.first.click(timeout=3000)
+                            print(f"confirmed railcard panel via {sel!r}", flush=True)
+                            break
+                    except Exception:
+                        continue
+
+                page.wait_for_timeout(500)
+                page.screenshot(path=str(args.out / "03b_after_railcard_select.png"))
+                (args.out / "03b_after_railcard_select.html").write_text(page.content(), encoding="utf-8")
+            else:
+                print("Add Railcard button not found", flush=True)
+        except Exception as exc:
+            print(f"railcard flow failed: {exc}", flush=True)
+
         page.screenshot(path=str(args.out / "04_after_fill.png"))
         (args.out / "04_after_fill.html").write_text(page.content(), encoding="utf-8")
 
@@ -171,6 +269,13 @@ def main() -> int:
             page.screenshot(path=str(args.out / "05_after_submit.png"))
             (args.out / "05_after_submit.html").write_text(page.content(), encoding="utf-8")
             print("current URL after submit:", page.url, flush=True)
+
+            if "nationalrail.co.uk" not in page.url:
+                print(
+                    f"WARNING: navigated away from nationalrail.co.uk to {page.url} "
+                    "— any prices found below are NOT NRE fares",
+                    flush=True,
+                )
 
             # Look for anything price-shaped (£ followed by digits) anywhere
             # in the resulting page — a quick, format-agnostic signal for
