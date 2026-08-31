@@ -1,0 +1,50 @@
+name: Discover fixture (manual dev tool)
+
+# Manually-triggered helper for Task 3 of docs/plans/001-train-price-alert.md:
+# runs scripts/capture_fixture.py against a real date and prints the result
+# to the job log, since GitHub Actions has real internet access that the
+# interactive development sandbox this project was built in does not.
+# Useful for regenerating tests/fixtures/journey_search_sample.json if
+# Trainline ever changes its response schema. No secrets required — this
+# only fetches public train prices.
+
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Travel date to capture, YYYY-MM-DD (should be a real term-time Tue/Thu/Fri)"
+        required: true
+        default: "2026-09-08"
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: playwright install --with-deps chromium
+      - name: Capture fixture
+        run: |
+          python scripts/capture_fixture.py \
+            --date "${{ inputs.date }}" \
+            --out /tmp/fixture.json \
+            --artifacts-dir /tmp/artifacts
+      - name: Print captured fixture
+        if: always()
+        run: |
+          echo "=== /tmp/fixture.json ==="
+          cat /tmp/fixture.json 2>/dev/null || echo "(no fixture written)"
+      - name: Print debug artifacts (present only on failure)
+        if: always()
+        run: |
+          echo "=== /tmp/artifacts listing ==="
+          ls -la /tmp/artifacts 2>/dev/null || echo "(no artifacts dir)"
+          echo "=== captured raw response, if any ==="
+          cat /tmp/artifacts/response-*.json 2>/dev/null || echo "(none)"
+          echo "=== page HTML, first 200 lines, if any ==="
+          head -200 /tmp/artifacts/page-*.html 2>/dev/null || echo "(none)"
