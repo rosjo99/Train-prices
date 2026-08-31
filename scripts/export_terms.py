@@ -46,6 +46,10 @@ def build_export() -> dict:
         # So the site can label its per-date price columns without
         # hand-duplicating the route's target departure times.
         "target_departures": list(config.TARGET_DEPARTURES),
+        # So the site can highlight a row without hand-duplicating the
+        # alert threshold — str(Decimal) rather than float(), so this
+        # stays an exact "10.00", not a binary-float approximation.
+        "price_threshold": str(config.PRICE_THRESHOLD),
         # Informational only (shown in the site's footer) — not used in
         # any checkable-date decision, so date.today() here isn't the
         # naive-clock-read the rest of this project avoids.

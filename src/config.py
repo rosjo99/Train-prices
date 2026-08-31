@@ -148,8 +148,15 @@ RUN_HOUR_LONDON = 20
 
 
 def _read_max_dates() -> int | None:
+    # Empty/absent means uncapped (e.g. a local shell run with MAX_DATES
+    # unset). "all" is a second, explicit way to say the same thing,
+    # needed because GitHub's own "Run workflow" web UI re-substitutes a
+    # workflow_dispatch input's default value whenever the field is
+    # cleared to blank before submitting — there is no way to actually
+    # submit an empty override from that UI, only from the API or CLI.
+    # See .github/workflows/price-check.yml's max_dates input.
     raw = os.environ.get("MAX_DATES", "").strip()
-    if not raw:
+    if not raw or raw.lower() == "all":
         return None
     try:
         value = int(raw)

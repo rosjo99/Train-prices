@@ -4,6 +4,10 @@
   --accent: #1a7f37;
   --bg-muted: #f6f8fa;
   --text-muted: #57606a;
+  --cheap-bg: #dafbe1;
+  --cheap-bg-hover: #b8f3c4;
+  --booked-bg: #ddf4ff;
+  --booked-bg-hover: #b6e3ff;
 }
 
 * {
@@ -103,6 +107,25 @@ table td {
 
 table tbody tr:hover {
   background: var(--bg-muted);
+}
+
+/* A fare under the alert threshold (green) vs. a date already booked
+   (blue) — booked wins when a row is somehow both, since a bought
+   ticket is the more useful thing to see at a glance. */
+table tbody tr.row-cheap {
+  background: var(--cheap-bg);
+}
+
+table tbody tr.row-cheap:hover {
+  background: var(--cheap-bg-hover);
+}
+
+table tbody tr.row-booked {
+  background: var(--booked-bg);
+}
+
+table tbody tr.row-booked:hover {
+  background: var(--booked-bg-hover);
 }
 
 input[type="checkbox"] {

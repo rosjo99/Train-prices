@@ -279,6 +279,105 @@ def test_scraper_fails_on_every_date_returns_1_no_email(monkeypatch):
     assert send_calls == []
 
 
+def test_five_consecutive_failed_dates_stops_early(monkeypatch):
+    # NRE only releases fares roughly 12 weeks ahead — dates beyond that
+    # horizon fail every time, so this guards against burning the full
+    # per-date retry budget on every remaining date of the school year.
+    d1, d2, d3, d4, d5 = (
+        date(2026, 9, 8),
+        date(2026, 9, 10),
+        date(2026, 9, 11),
+        date(2026, 9, 15),
+        date(2026, 9, 17),
+    )
+    d6 = date(2026, 9, 18)  # would succeed, but must never be attempted
+    fetch_calls = _install_fake_scraper(
+        monkeypatch,
+        {
+            d1: scraper.ScraperError("boom"),
+            d2: scraper.ScraperError("boom"),
+            d3: scraper.ScraperError("boom"),
+            d4: scraper.ScraperError("boom"),
+            d5: scraper.ScraperError("boom"),
+            d6: _raw(_journey(d6, "07:25", "08:26", price=None)),
+        },
+    )
+    send_calls = _install_fake_notifier(monkeypatch)
+    monkeypatch.setattr(main.config, "MAX_DATES", 6)
+
+    result = main.main(today=TERM_TIME_DAY)
+
+    assert result == 1
+    assert fetch_calls == [d1, d2, d3, d4, d5]
+    assert send_calls == []
+
+
+def test_a_success_between_failures_resets_the_consecutive_count(monkeypatch):
+    # Four failures, then a success, then four more failures — never five
+    # in a row — must check every candidate date, not stop early.
+    dates = [
+        date(2026, 9, 8),
+        date(2026, 9, 10),
+        date(2026, 9, 11),
+        date(2026, 9, 15),
+        date(2026, 9, 17),  # succeeds — resets the streak
+        date(2026, 9, 18),
+        date(2026, 9, 22),
+        date(2026, 9, 24),
+        date(2026, 9, 25),
+    ]
+    success_date = dates[4]
+    results_by_date = {
+        d: (scraper.ScraperError("boom") if d != success_date else _raw()) for d in dates
+    }
+    fetch_calls = _install_fake_scraper(monkeypatch, results_by_date)
+    monkeypatch.setattr(main.config, "MAX_DATES", len(dates))
+
+    result = main.main(today=TERM_TIME_DAY)
+
+    assert result == 0
+    assert fetch_calls == dates
+
+
+def test_five_consecutive_parse_failures_also_stops_early(monkeypatch):
+    # The consecutive-failure count spans both failure types (scrape and
+    # parse), not just one — a mix of the two should still trip it.
+    d1, d2, d3, d4, d5 = (
+        date(2026, 9, 8),
+        date(2026, 9, 10),
+        date(2026, 9, 11),
+        date(2026, 9, 15),
+        date(2026, 9, 17),
+    )
+    d6 = date(2026, 9, 18)
+    _install_fake_scraper(
+        monkeypatch,
+        {
+            d1: scraper.ScraperError("boom"),
+            d2: _raw(),  # scrapes fine, but...
+            d3: scraper.ScraperError("boom"),
+            d4: _raw(),
+            d5: scraper.ScraperError("boom"),
+            d6: _raw(_journey(d6, "07:25", "08:26", price=None)),
+        },
+    )
+    # ...parsing d2 and d4's raw bodies fails, so all five of d1-d5 count
+    # as failed dates regardless of which stage failed.
+    original_parse = main.parser.parse_journeys
+
+    def _fake_parse(raw, travel_date):
+        if raw == {"outwardJourneys": []} and travel_date in (d2, d4):
+            raise main.parser.ParseError("boom")
+        return original_parse(raw, travel_date)
+
+    monkeypatch.setattr(main.parser, "parse_journeys", _fake_parse)
+    monkeypatch.setattr(main.config, "MAX_DATES", 6)
+
+    result = main.main(today=TERM_TIME_DAY)
+
+    assert result == 1
+
+
 def test_blocked_error_on_first_date_aborts_immediately(monkeypatch):
     d1, d2 = date(2026, 9, 8), date(2026, 9, 10)
     fetch_calls = _install_fake_scraper(

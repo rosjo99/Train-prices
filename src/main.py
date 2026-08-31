@@ -31,6 +31,15 @@ ARTIFACTS_DIR = Path("artifacts")
 # not an evasion measure.
 PAUSE_BETWEEN_DATES_SECONDS = (5, 15)
 
+# National Rail Enquiries only releases fares up to ~12 weeks ahead —
+# candidate dates beyond that horizon fail every time (scrape or parse
+# error), not just occasionally, since there's simply no fare data yet.
+# Once this many dates in a row fail, stop attempting any further
+# candidates rather than spending the full per-date retry budget on
+# every remaining date of the school year. A run that succeeds on some
+# dates and then hits this cutoff still alerts on whatever it found.
+MAX_CONSECUTIVE_FAILURES = 5
+
 
 def _ensure_logging_configured() -> None:
     """Configure a stdout, timestamped logger if nothing has already.
@@ -109,6 +118,17 @@ def _best_effort_matches_for_test(
     return [best] if best is not None else []
 
 
+def _log_stopped_early(last_failed_date: date, remaining_count: int) -> None:
+    logger.warning(
+        "[%s] %d consecutive dates failed — stopping early, assuming fares "
+        "aren't released yet this far out (NRE releases fares roughly 12 "
+        "weeks ahead); %d further candidate date(s) were not attempted",
+        last_failed_date.isoformat(),
+        MAX_CONSECUTIVE_FAILURES,
+        remaining_count,
+    )
+
+
 def _log_target_summary(travel_date: date, targets: dict[str, TrainOption | None]) -> None:
     for departure_time, option in targets.items():
         if option is None:
@@ -169,6 +189,7 @@ def main(today: date | None = None, now: datetime | None = None) -> int:
 
     results: dict[date, dict[str, TrainOption | None]] = {}
     failures: list[tuple[date, str]] = []
+    consecutive_failures = 0
 
     for index, travel_date in enumerate(candidates):
         if index > 0:
@@ -187,6 +208,10 @@ def main(today: date | None = None, now: datetime | None = None) -> int:
         except scraper.ScraperError as exc:
             logger.warning("[%s] scrape failed, skipping this date: %s", travel_date.isoformat(), exc)
             failures.append((travel_date, str(exc)))
+            consecutive_failures += 1
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                _log_stopped_early(travel_date, len(candidates) - index - 1)
+                break
             continue
 
         try:
@@ -194,8 +219,13 @@ def main(today: date | None = None, now: datetime | None = None) -> int:
         except parser.ParseError as exc:
             logger.warning("[%s] parse failed, skipping this date: %s", travel_date.isoformat(), exc)
             failures.append((travel_date, str(exc)))
+            consecutive_failures += 1
+            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                _log_stopped_early(travel_date, len(candidates) - index - 1)
+                break
             continue
 
+        consecutive_failures = 0
         targets = parser.select_target_trains(options, config.TARGET_DEPARTURES)
         _log_target_summary(travel_date, targets)
         results[travel_date] = targets
@@ -207,13 +237,13 @@ def main(today: date | None = None, now: datetime | None = None) -> int:
         )
 
     if not results:
-        logger.error("all %d candidate date(s) failed — see failures logged above", len(candidates))
+        logger.error("all %d attempted candidate date(s) failed — see failures logged above", len(failures))
         return 1
     if failures:
         logger.warning(
-            "%d of %d candidate date(s) failed; continuing with the %d that succeeded",
+            "%d of %d attempted candidate date(s) failed; continuing with the %d that succeeded",
             len(failures),
-            len(candidates),
+            len(results) + len(failures),
             len(results),
         )
 
