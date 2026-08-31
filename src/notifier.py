@@ -70,11 +70,6 @@ def _format_date(d) -> str:
     return d.strftime("%a %d %b")
 
 
-def _build_link(match: AlertMatch) -> str:
-    hour, minute = match.option.departure_time.split(":")
-    return config.build_journey_planner_url(match.travel_date, hour, minute)
-
-
 def _build_subject(ordered_matches: list[AlertMatch]) -> str:
     cheapest = ordered_matches[0]
     subject = (
@@ -100,7 +95,7 @@ def _build_text_body(ordered_matches: list[AlertMatch]) -> str:
         railcard_note = "16-25 Railcard" if option.railcard_applied else "16-25 Railcard NOT confirmed"
         lines.append(
             f"{_format_date(match.travel_date)} {option.departure_time} -> {arrival}  "
-            f"{_format_price(option.price)}  ({changes}, {railcard_note})  {_build_link(match)}"
+            f"{_format_price(option.price)}  ({changes}, {railcard_note})"
         )
     extra = len(ordered_matches) - len(shown)
     if extra > 0:
@@ -113,7 +108,6 @@ def _html_row(match: AlertMatch) -> str:
     changes = "Direct" if option.is_direct else "Changes"
     arrival = option.arrival_time or "?"
     railcard_note = "Yes" if option.railcard_applied else "Not confirmed"
-    link = _build_link(match)
     return (
         "<tr>"
         f"<td>{_format_date(match.travel_date)}</td>"
@@ -122,7 +116,6 @@ def _html_row(match: AlertMatch) -> str:
         f"<td>{_format_price(option.price)}</td>"
         f"<td>{changes}</td>"
         f"<td>{railcard_note}</td>"
-        f'<td><a href="{link}">Book</a></td>'
         "</tr>"
     )
 
@@ -137,7 +130,7 @@ def _build_html_body(ordered_matches: list[AlertMatch]) -> str:
         f"<h2>Cheap fares — {config.ORIGIN_NAME} → {config.DESTINATION_NAME}</h2>"
         "<table border=\"1\" cellpadding=\"4\" cellspacing=\"0\">"
         "<tr><th>Date</th><th>Departs</th><th>Arrives</th><th>Price</th>"
-        "<th>Direct?</th><th>16-25 Railcard</th><th>Link</th></tr>"
+        "<th>Direct?</th><th>16-25 Railcard</th></tr>"
         f"{rows}"
         "</table>"
         f"{extra_html}"

@@ -17,10 +17,13 @@ checking it — no coding involved, no need to touch this repo directly.
 — see [Setting up the booked-dates website](#setting-up-the-booked-dates-website)
 below). The table (including the last price recorded for each date,
 once the first successful run has happened) is visible to anyone with
-the link straight away — no setup needed just to look. Ticking a
-checkbox needs the one-time token setup described below; it saves
-immediately. This is the page meant to be shared with anyone who
-doesn't use GitHub day to day.
+the link straight away — no setup needed just to look. A row turns
+**green** if either train's last-recorded price was under £10, and
+**blue** once the date is marked as booked (blue wins if a row is
+somehow both). Ticking a checkbox needs the one-time token setup
+described below; it saves immediately, including the highlight. This is
+the page meant to be shared with anyone who doesn't use GitHub day to
+day.
 
 **Fallback — editing the file directly:** open `booked-dates.txt` on
 github.com, click the pencil (edit) icon, add a line `YYYY-MM-DD`, and
@@ -142,8 +145,12 @@ waits for 8pm London; a manual run always executes immediately.
 
 By default a manual run only checks **one** date (`max_dates: 1`
 in the "Run workflow" dialog), so it normally finishes in well under a
-minute. Clear that field (or set a bigger number) to test against more
-dates at once.
+minute. Type a bigger number to test against more dates at once, or
+type `all` to check every remaining date this school year. **Don't just
+clear the field to blank** — GitHub's own "Run workflow" web UI silently
+re-applies the default value (`1`) whenever this field is submitted
+empty, so a genuinely blank field never actually reaches the workflow;
+`all` is the only reliable way to ask for every date from this UI.
 
 The scheduled run at 8pm every day behaves differently in exactly the
 two ways described above: it waits for the real 8pm London time slot,

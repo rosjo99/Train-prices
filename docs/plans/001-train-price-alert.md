@@ -385,6 +385,29 @@ need no DOB**):
   when set, must parse as a positive int; used only to cap the candidate
   list for manual/debug `workflow_dispatch` runs, never by the scheduled
   cron run. Raise `ConfigError` if set but not a positive int.
+
+#### Revision: `MAX_DATES=all` sentinel
+
+A live manual run showed that clearing the `max_dates` field in GitHub's
+own "Run workflow" web UI and submitting it still ran only 1 date, not
+every remaining date as the field's description ("leave blank to check
+everything") promised. This turned out to be a GitHub Actions UI
+limitation, not a bug in this project's parsing: the web dispatch form
+always re-substitutes a `workflow_dispatch` input's declared `default`
+whenever the submitted value is empty, so there is no way to actually
+submit a blank override from that specific UI (dispatching via the API
+or CLI with the input omitted works fine, since it never even goes near
+that special-cased UI code path).
+
+Since a genuinely blank `MAX_DATES` can never reliably reach the
+workflow from the web UI, `_read_max_dates()` also treats the literal
+string `"all"` (case-insensitive) as "no cap" — a value that survives
+being typed into and submitted from that same form. Blank/absent is
+still supported and still means "no cap" too, since it works fine for
+every other invocation path (a local shell run, the scheduled cron run,
+which never sets `MAX_DATES` at all). The workflow's `max_dates` input
+description and README.md's "Running a test" section were updated to
+tell users to type `all`, not to clear the field.
 - `DRY_RUN` from env `DRY_RUN` — truthy values `1/true/yes` (case
   insensitive). **Removed in Task 7's revision** — replaced by
   `SKIP_TIME_GATE`/`TEST_RUN` (see Task 7's "One test, not a grid of
@@ -872,6 +895,15 @@ Railcard NOT confirmed" in the text body; a "16-25 Railcard" column with
 "Yes"/"Not confirmed" in the HTML table), so the email stays accurate
 per fare without reintroducing a gate on whether to send it at all.
 
+#### Revision: dropped the per-fare booking link
+
+Per explicit request, `_build_link()` and the "Link"/"Book" column were
+removed from both the text and HTML bodies — the email is now purely
+informational (date, times, price, direct/changes, railcard status),
+with no outbound link at all. `config.build_journey_planner_url()`
+itself wasn't touched, since `src/scraper.py` still uses it to build the
+deep-link search URL.
+
 ---
 
 ### Task 6 — Orchestrator, booked-date exclusion, and alert decision
@@ -966,6 +998,33 @@ not "never email me about a fare unless its railcard discount was
 specifically confirmed." See §2.1's revision note for the full decision.
 `evaluate()` now returns a plain `list[AlertMatch]` with no side flag,
 and there is no run-wide suppression based on `railcard_applied` at all.
+
+#### Revision: stop early after 5 consecutive failed dates
+
+National Rail Enquiries only releases fares roughly 12 weeks ahead —
+candidate dates beyond that horizon don't fail occasionally, they fail
+*every* time (scrape or parse error), since there's simply no fare data
+published yet. Without this, a run early in a term would spend its full
+per-date retry budget (up to ~4 minutes, per Task 3's scraper) on every
+one of the ~100+ remaining candidate dates, the vast majority of which
+are certain to fail for this reason alone.
+
+`main()`'s per-date loop now tracks `consecutive_failures`, incremented
+once per candidate date that ends in either a `ScraperError` or a
+`ParseError` (not `BlockedError`/`HijackedError`, which already abort
+the whole run immediately) and reset to 0 on any date that succeeds.
+Once it reaches `MAX_CONSECUTIVE_FAILURES = 5`, the loop stops
+attempting further candidates entirely — it does not return early or
+skip alerting on what it already found, it just stops trying dates
+that, empirically, are certain to keep failing. The "N of M candidate
+date(s) failed" summary log line was changed to count only *attempted*
+dates (`len(results) + len(failures)`), not the full original candidate
+list, so it stays accurate whether or not the loop stopped early.
+
+This is a fixed count of consecutive **dates**, not a count of
+individual scrape attempts — a single date's own internal retries
+(Task 3's `fetch_journey_search`, up to 3 attempts) don't each count
+separately; only the date's final, post-retry outcome does.
 
 Structured, timestamped logging to stdout throughout (use `logging`
 configured to stdout at INFO).
@@ -1279,6 +1338,24 @@ is needed.
 - The price-history commit racing the *next* scheduled run's own commit
   → `git pull --rebase` before push in the workflow step, matching the
   same race-handling already used for the booked-dates website.
+
+#### Revision: highlight cheap and booked rows on the site
+
+Per explicit request, each date row is now colour-coded: green
+(`.row-cheap`) when at least one target departure's last-recorded price
+beats `config.PRICE_THRESHOLD`, blue (`.row-booked`) when the date is
+already in `booked-dates.txt`. Booked wins when a row is somehow both —
+a bought ticket is the more useful thing to see at a glance than "this
+was cheap". `scripts/export_terms.py` now also exports
+`price_threshold` (`str(config.PRICE_THRESHOLD)`, not `float()`, so the
+site never re-derives its own copy of the threshold) alongside the
+existing `target_departures`; `site/app.js`'s new `rowHasCheapFare()`
+mirrors `src.main.evaluate()`'s own price check (present, sold_out is
+`"False"`, strictly below threshold) purely to decide this row's
+highlight — it never sends an alert, the CSV is just a log. Toggling a
+checkbox updates that row's highlight immediately (via the `rowEl`/
+`isCheap` values `toggleDate()` already has in scope from render time),
+rather than waiting for the next full page load.
 
 ---
 

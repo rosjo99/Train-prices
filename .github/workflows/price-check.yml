@@ -25,7 +25,7 @@ on:
   workflow_dispatch:
     inputs:
       max_dates:
-        description: "Cap the number of dates checked, for a quicker test (leave blank to check everything)"
+        description: "Number of dates to check, for a quicker test. Type 'all' to check every remaining date (GitHub doesn't reliably apply a blank value here, so don't just clear this field)"
         default: "1"
 
 concurrency:

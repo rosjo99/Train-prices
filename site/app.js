@@ -193,6 +193,18 @@ function formatLatestCell(row) {
   return `£${Number(row.price_gbp).toFixed(2)}`;
 }
 
+// True if any target departure's last-recorded price on this date beats
+// the alert threshold — mirrors src.main.evaluate()'s own price check
+// (price present, and strictly below threshold), used only to decide
+// this row's highlight, never to send an alert (the CSV is just a log).
+function rowHasCheapFare(byTarget, targetDepartures, threshold) {
+  return targetDepartures.some((target) => {
+    const row = byTarget[target];
+    if (!row || row.sold_out === "True" || !row.actual_departure || !row.price_gbp) return false;
+    return Number(row.price_gbp) < threshold;
+  });
+}
+
 // ---------------------------------------------------------------------------
 // GitHub Contents API — every call goes straight from this browser to
 // api.github.com using the token pasted into the setup box, stored only
@@ -300,7 +312,11 @@ document.getElementById("token-clear").addEventListener("click", () => {
   loadAndRender();
 });
 
-async function toggleDate(iso, checkboxEl) {
+// rowEl/isCheap let a successful save update this row's highlight
+// immediately, without waiting for the next full reload — isCheap is
+// fixed at render time (from the last-recorded price), so it doesn't
+// change just because the booked state did.
+async function toggleDate(iso, checkboxEl, rowEl, isCheap) {
   const token = getToken();
   if (!token) {
     showStatus("Add your token above first.", "error");
@@ -326,6 +342,10 @@ async function toggleDate(iso, checkboxEl) {
       : `Unmark ${iso} as booked (via booked-dates site)`;
     await githubPutFile(token, newContent, sha, message);
     showStatus(`Saved — ${iso} is now ${nowBooking ? "booked" : "not booked"}.`, "ok");
+    if (rowEl) {
+      rowEl.classList.toggle("row-booked", nowBooking);
+      rowEl.classList.toggle("row-cheap", !nowBooking && isCheap);
+    }
   } catch (err) {
     console.error(err);
     checkboxEl.checked = !checkboxEl.checked;
@@ -348,6 +368,7 @@ function renderTable(dates, bookedSet, termsData, latestByDate, hasToken) {
   }
 
   const targetDepartures = termsData.target_departures || [];
+  const threshold = Number(termsData.price_threshold);
   let currentTermName = null;
   let tbody = null;
 
@@ -385,14 +406,21 @@ function renderTable(dates, bookedSet, termsData, latestByDate, hasToken) {
       row.appendChild(priceCell);
     }
 
+    const isBooked = bookedSet.has(iso);
+    const isCheap = rowHasCheapFare(byTarget, targetDepartures, threshold);
+    // Booked wins over cheap: once a ticket is actually bought, that's a
+    // more useful signal to see at a glance than "this was cheap".
+    row.classList.toggle("row-booked", isBooked);
+    row.classList.toggle("row-cheap", !isBooked && isCheap);
+
     const checkboxCell = document.createElement("td");
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
-    checkbox.checked = bookedSet.has(iso);
+    checkbox.checked = isBooked;
     checkbox.disabled = !hasToken;
     checkbox.title = hasToken ? "" : "Add your token above to edit";
     checkbox.setAttribute("aria-label", `Mark ${iso} as booked`);
-    checkbox.addEventListener("change", () => toggleDate(iso, checkbox));
+    checkbox.addEventListener("change", () => toggleDate(iso, checkbox, row, isCheap));
     checkboxCell.appendChild(checkbox);
     row.appendChild(checkboxCell);
 
