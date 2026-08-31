@@ -485,11 +485,18 @@ that replaced it). This section now documents what was actually built.
 `RAILCARD_CODE`/`JOURNEY_PLANNER_URL_TEMPLATE`/`JOURNEY_PLANNER_API_HOST`/
 `NRE_HOST_SUFFIX`, each with a comment recording how and when it was
 confirmed (2026-08-31, via `scripts/probe_nre_deeplink.py`).
-**Still outstanding from the original task scope:** `scripts/
-capture_fixture.py` exists (adapted, unchanged in shape) but has not yet
-been run to produce `tests/fixtures/journey_search_sample.json` — do this
-before starting Task 4, since Task 4's acceptance criteria depend on a
-real committed fixture.
+`scripts/capture_fixture.py` was run against a real date
+(2026-09-08, a term-time Tuesday) via the new `capture-fixture.yml`
+workflow and its output committed as
+`tests/fixtures/journey_search_sample.json` — confirms 10 outward
+journeys including both target departures (`07:25`→`08:26` and
+`07:30`→`08:25`), each fare option's `railcardFares` array containing a
+`code: "YNG"` entry with its own discounted `prices.adult` (e.g. one
+Advance Single: `totalPrice: 3060`, `undiscountedPrices.adult: 4600`,
+`railcardFares: [{"code": "YNG", "prices": {"adult": 3060}}]` — pence
+throughout). Scanned for session-identifying fields (tokens, cookies,
+customer/booking IDs) before committing — none found; the only
+per-request identifier is `searchId` (a UUID), left in as harmless.
 
 **Discovery, for the record**
 
@@ -574,7 +581,7 @@ customer id), redact those fields before committing and note the
 redaction in the fixture's sibling `README` line or a `_note` key.
 
 **Acceptance criteria**
-- `python scripts/capture_fixture.py --date <a real term Tue/Thu/Fri> --out tests/fixtures/journey_search_sample.json` succeeds and produces a JSON file containing recognisable fares and a 07:25 and a 07:30 departure. **Not yet run — outstanding, see above.**
+- `python scripts/capture_fixture.py --date <a real term Tue/Thu/Fri> --out tests/fixtures/journey_search_sample.json` succeeds and produces a JSON file containing recognisable fares and a 07:25 and a 07:30 departure. **Done** — see above.
 - `src/config.py` has real, non-placeholder CRS codes and a confirmed
   `JOURNEY_PLANNER_URL_TEMPLATE`, with a comment recording the date they
   were verified. **Done.**
