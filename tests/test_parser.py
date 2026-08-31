@@ -106,18 +106,19 @@ def test_fareless_journey_is_sold_out_with_no_price():
     assert option.fare_name is None
 
 
-def test_railcard_stripped_from_fare_gives_railcard_applied_false():
+def test_railcard_stripped_from_fare_still_reports_the_fares_own_price():
+    # A fare with no matching railcardFares entry is still a real,
+    # bookable price — per explicit decision, alerting no longer
+    # requires positive railcard confirmation (see this module's
+    # docstring). railcard_applied stays False (informational only).
     raw = _load_fixture("journey_search_no_railcard.json")
 
     [option] = parse_journeys(raw, date(2026, 9, 8))
 
     assert option.railcard_applied is False
-    assert option.price is None
-    # The positive-confirmation rule ties sold_out to "no fare carries our
-    # railcard discount", not to whether any fare exists at all — a fare
-    # existing without our railcard is functionally the same "can't alert
-    # on this" state as no fare existing.
-    assert option.sold_out is True
+    assert option.price == Decimal("50.00")
+    assert option.sold_out is False
+    assert option.fare_name == "Anytime Day Single"
 
 
 def test_both_target_trains_sold_out(monkeypatch):

@@ -49,40 +49,29 @@ def _ensure_logging_configured() -> None:
 
 def evaluate(
     targets_by_date: dict[date, dict[str, TrainOption | None]],
-) -> tuple[list[AlertMatch], bool]:
+) -> list[AlertMatch]:
     """Pure decision function: which TrainOptions beat the price
-    threshold, and whether any priced option's railcard discount
-    couldn't be confirmed.
+    threshold.
 
-    Returns (matches, railcard_unconfirmed). A single list[AlertMatch]
-    return (as docs/plans/001-train-price-alert.md Task 6 shows in its
-    signature sketch) can't also carry the railcard_unconfirmed signal
-    that step 7 of the same task needs — this returns both explicitly
-    rather than smuggling a flag onto the list.
-
-    A match requires price is not None, currency == "GBP",
-    railcard_applied, and price < config.PRICE_THRESHOLD (strictly
-    less-than — exactly the threshold does not alert). Any option with a
-    price but railcard_applied is False sets railcard_unconfirmed, which
-    the caller treats as reason to send no email at all, even if other,
-    genuinely-confirmed matches exist elsewhere in the same run —
-    CLAUDE.md: a wrong price in an alert is worse than a missed alert.
+    A match requires price is not None, currency == "GBP", and
+    price < config.PRICE_THRESHOLD (strictly less-than — exactly the
+    threshold does not alert). Whether the 16-25 railcard discount was
+    positively confirmed (option.railcard_applied) is informational only
+    — carried through to the CSV log and the email — and no longer gates
+    whether a price counts, per explicit decision: alert on any
+    unbooked fare under threshold, confirmed discount or not (see
+    src/parser.py's module docstring).
     """
     matches: list[AlertMatch] = []
-    railcard_unconfirmed = False
     seen: set[tuple[date, str]] = set()
 
     for travel_date, targets in targets_by_date.items():
         for option in targets.values():
             if option is None:
                 continue
-            if option.price is not None and not option.railcard_applied:
-                railcard_unconfirmed = True
-                continue
             if not (
                 option.price is not None
                 and option.currency == "GBP"
-                and option.railcard_applied
                 and option.price < config.PRICE_THRESHOLD
             ):
                 continue
@@ -94,24 +83,24 @@ def evaluate(
                 AlertMatch(travel_date=travel_date, option=option, threshold=config.PRICE_THRESHOLD)
             )
 
-    return matches, railcard_unconfirmed
+    return matches
 
 
 def _best_effort_matches_for_test(
     targets_by_date: dict[date, dict[str, TrainOption | None]],
 ) -> list[AlertMatch]:
     """TEST_RUN fallback for when nothing found is genuinely below
-    threshold: pick the single cheapest real, railcard-confirmed fare
-    across the whole run (regardless of the threshold) so a manual test
-    run still sends one genuine email end to end — using only real
-    scraped data, never a fabricated price. Returns [] if literally no
-    priced, railcard-confirmed fare was found at all (e.g. every target
-    sold out) — there's then nothing real to report.
+    threshold: pick the single cheapest real fare across the whole run
+    (regardless of the threshold) so a manual test run still sends one
+    genuine email end to end — using only real scraped data, never a
+    fabricated price. Returns [] if literally no priced fare was found
+    at all (e.g. every target sold out) — there's then nothing real to
+    report.
     """
     best: AlertMatch | None = None
     for travel_date, targets in targets_by_date.items():
         for option in targets.values():
-            if option is None or option.price is None or not option.railcard_applied:
+            if option is None or option.price is None:
                 continue
             if best is None or option.price < best.option.price:
                 best = AlertMatch(
@@ -228,15 +217,7 @@ def main(today: date | None = None, now: datetime | None = None) -> int:
             len(results),
         )
 
-    matches, railcard_unconfirmed = evaluate(results)
-
-    if railcard_unconfirmed:
-        logger.error(
-            "at least one priced fare could not have its railcard discount "
-            "positively confirmed — sending no email (a wrong price in an "
-            "alert is worse than a missed alert)"
-        )
-        return 1
+    matches = evaluate(results)
 
     is_test_summary = False
     if not matches and config.TEST_RUN:

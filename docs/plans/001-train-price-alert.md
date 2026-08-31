@@ -181,10 +181,36 @@ rather than the Trainline one originally planned.
 
 - Threshold fires on `price < Decimal("10.00")`. **Exactly £10.00 does
   not fire** ("below GBP 10").
-- Prices compared are the 16-25-railcard-applied one-way fares.
-- If the railcard's application cannot be positively confirmed in the
-  response, **no alert is sent** and the run fails (exit 1). A wrong
-  price in an alert email is worse than a missed alert.
+- Prices compared are the cheapest one-way fare found for the journey —
+  searched with a 16-25 railcard applied, but not required to be
+  confirmed as the railcard-discounted price (see the revision note
+  immediately below).
+
+#### Revision: railcard confirmation no longer gates alerting
+
+The original decision here was: if the railcard's application couldn't
+be positively confirmed in the response, no alert is sent and the run
+fails loudly (exit 1) — "a wrong price in an alert is worse than a
+missed alert."
+
+The user later clarified that this wasn't actually what they wanted.
+Their concern was narrower: don't send an email unless there's a real,
+unbooked fare below £10 (railcard-discounted or not) — not "never send
+an email whose price wasn't confirmed as railcard-discounted." Asked
+directly which behaviour to keep, the user chose: alert on any
+sub-threshold fare, treated the same whether or not the railcard
+discount is confirmed.
+
+So as of this revision: `evaluate()` (Task 6) alerts on any option with
+`price is not None`, `currency == "GBP"`, and `price < threshold` —
+`railcard_applied` no longer participates in that decision at all. It's
+still computed and carried through as informational metadata (shown in
+the email and logged to `price-history.csv`), because it's still useful
+context for a human deciding whether to book, but a `False` value no
+longer suppresses the run or the email. There is no longer a
+`railcard_unconfirmed` flag or a "no email if any priced option's
+discount is unconfirmed" run-wide safety check — see Task 6 and Task 7's
+`_best_effort_matches_for_test`.
 
 ### 2.2 Which travel dates get checked (decided)
 
@@ -713,6 +739,21 @@ and compared to the threshold), so both collapse to the same state. All
   real fixture should be spot-checked to confirm this holds throughout,
   and a test should assert it with a comment.
 
+#### Revision: price is the cheapest fare found, not the railcard fare specifically
+
+Superseding the "Price: the 16-25-railcard fare specifically" bullet
+above — see §2.1's "Revision: railcard confirmation no longer gates
+alerting". `_find_best_fare()` now compares every fare's own
+`totalPrice` **and** every matching `railcardFares` entry and returns
+whichever is cheaper (ties favour the railcard entry, being the more
+informative of two equal prices). `railcard_applied` records only
+whether the *winning* price specifically came from a railcard entry;
+`sold_out` is now `price is None` (a fare existing with only a plain
+price, no railcard entry, is a real bookable option, not "sold out").
+This didn't regress the real fixture: every one of its 10 journeys'
+cheapest `totalPrice` and cheapest matching `railcardFares` price tie,
+so `railcard_applied` stays `True` throughout for that fixture.
+
 ---
 
 ### Task 5 — Email notifier
@@ -778,6 +819,16 @@ All 98 tests pass (`python -m pytest -q`), no `float` in the module.
 - Very long match list → cap the emailed table at 20 rows plus a
   "+N more" line.
 
+#### Revision: per-row railcard-confirmation column
+
+Following §2.1's revision (alerting no longer requires railcard
+confirmation), the fixed "(16-25 Railcard)" heading was dropped from
+the subject/body — it's no longer true of every row. Instead each row
+now shows its own `railcard_applied` status ("16-25 Railcard" vs. "16-25
+Railcard NOT confirmed" in the text body; a "16-25 Railcard" column with
+"Yes"/"Not confirmed" in the HTML table), so the email stays accurate
+per fare without reintroducing a gate on whether to send it at all.
+
 ---
 
 ### Task 6 — Orchestrator, booked-date exclusion, and alert decision
@@ -787,16 +838,11 @@ All 98 tests pass (`python -m pytest -q`), no `float` in the module.
 **Created:** `src/main.py`, `src/booked_dates.py`, `booked-dates.txt`,
 `tests/test_main.py`, `tests/test_booked_dates.py`
 
-Two implementation notes beyond the spec below:
-- `evaluate()` returns `tuple[list[AlertMatch], bool]`, not the single
-  `list[AlertMatch]` this task's signature sketch shows — a plain list
-  can't also carry the `railcard_unconfirmed` flag step 7 needs, so both
-  are returned explicitly rather than smuggling a flag onto the list.
-- `railcard_unconfirmed` suppresses the **entire** run's email, not just
-  the affected date — if any priced fare anywhere in the run couldn't
-  have its railcard confirmed, no email is sent at all even if other
-  dates have genuinely-confirmed matches, per CLAUDE.md's "a wrong price
-  is worse than a missed alert."
+`evaluate()` returns the single `list[AlertMatch]` this task's signature
+sketch shows. (An earlier revision of this implementation had it return
+`tuple[list[AlertMatch], bool]`, the second element a
+`railcard_unconfirmed` flag — see the revision note after step 7 below
+for why that was removed again.)
 
 Confirmed against a real (if network-less) run in this environment (at
 the time, via the now-removed `DRY_RUN=1`; the equivalent today is
@@ -854,17 +900,29 @@ the user sees the format immediately):
 6. `evaluate(targets_by_date) -> list[AlertMatch]` — a pure, separately
    tested function:
    - Include an option iff `price is not None` **and** `currency == "GBP"`
-     **and** `railcard_applied` **and** `price < config.PRICE_THRESHOLD`.
-   - If any option has a price but `railcard_applied is False`, record a
-     `railcard_unconfirmed` flag.
-7. If `railcard_unconfirmed` → log an error, send **no** email, return `1`.
-8. If matches → `notifier.send_alert(...)`; log what was sent.
-9. If no matches → log "no fares below threshold", return 0.
-10. Exit code: `0` = ran cleanly (alert or not). `1` = every candidate
-    date failed, or blocked, or railcard unconfirmed, or the notifier
-    failed. `0` with a warning when *some* dates failed but at least one
-    succeeded.
-11. `if __name__ == "__main__": sys.exit(main())`.
+     **and** `price < config.PRICE_THRESHOLD`. (`railcard_applied` does
+     not gate inclusion — see the revision note below.)
+7. If matches → `notifier.send_alert(...)`; log what was sent.
+8. If no matches → log "no fares below threshold", return 0.
+9. Exit code: `0` = ran cleanly (alert or not). `1` = every candidate
+   date failed, or blocked, or the notifier failed. `0` with a warning
+   when *some* dates failed but at least one succeeded.
+10. `if __name__ == "__main__": sys.exit(main())`.
+
+#### Revision: dropped the `railcard_unconfirmed` run-wide safety check
+
+The original spec's steps 6–7 above (superseded) had `evaluate()` also
+record a `railcard_unconfirmed` flag whenever any priced option's
+railcard discount wasn't positively confirmed, and had `main()` suppress
+the **entire** run's email whenever that flag was set — even if other,
+genuinely-confirmed matches existed elsewhere in the same run.
+
+The user clarified this wasn't the behaviour they wanted: their actual
+concern was only "don't email me if there's no real sub-£10 fare",
+not "never email me about a fare unless its railcard discount was
+specifically confirmed." See §2.1's revision note for the full decision.
+`evaluate()` now returns a plain `list[AlertMatch]` with no side flag,
+and there is no run-wide suppression based on `railcard_applied` at all.
 
 Structured, timestamped logging to stdout throughout (use `logging`
 configured to stdout at INFO).
@@ -886,8 +944,9 @@ monkeypatching `datetime`)
 - Scraper raises on *all* dates → returns 1, no email.
 - `BlockedError` on the first date → returns 1 immediately, no further
   scrapes.
-- A sub-threshold price with `railcard_applied=False` → returns 1 and
-  `send_alert` **not** called.
+- A sub-threshold price with `railcard_applied=False` → returns 0 and
+  `send_alert` **is** called with that match (see the revision note
+  after step 7 above).
 - ~~`DRY_RUN=1` → no secrets required, `send_alert` receives
   `dry_run=True`~~ — removed in Task 7's revision; see
   `TEST_RUN`/`SKIP_TIME_GATE` there instead, both of which still
@@ -988,14 +1047,13 @@ combination of toggles to reason about. Revised to:
   test run's data is always real, never fabricated.
 - `src/main.py`'s `_best_effort_matches_for_test()`: when `TEST_RUN` is
   set and `evaluate()` found nothing genuinely below threshold, picks
-  the single cheapest real, railcard-confirmed fare found across the
-  whole run and sends *that* through the normal `notifier.send_alert`
-  path — a real email using real data, confirming scraping + the CSV
-  log + Resend delivery together, without fabricating a price. Returns
-  no email (not a fabricated one) if literally nothing priced was found
-  at all (e.g. everything sold out) — even a test run never invents
-  data. `TEST_RUN` never overrides the `railcard_unconfirmed` safety
-  check — that invariant holds unconditionally.
+  the single cheapest real fare found across the whole run — confirmed
+  railcard discount or not, per Task 6's revision note — and sends
+  *that* through the normal `notifier.send_alert` path — a real email
+  using real data, confirming scraping + the CSV log + Resend delivery
+  together, without fabricating a price. Returns no email (not a
+  fabricated one) if literally nothing priced was found at all (e.g.
+  everything sold out) — even a test run never invents data.
 
 #### Workflow permissions
 

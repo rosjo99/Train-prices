@@ -82,17 +82,17 @@ def _build_subject(ordered_matches: list[AlertMatch]) -> str:
 def _build_text_body(ordered_matches: list[AlertMatch]) -> str:
     shown = ordered_matches[:MAX_TABLE_ROWS]
     lines = [
-        f"Cheap fares found for {config.ORIGIN_NAME} → {config.DESTINATION_NAME} "
-        f"(16-25 Railcard):",
+        f"Cheap fares found for {config.ORIGIN_NAME} → {config.DESTINATION_NAME}:",
         "",
     ]
     for match in shown:
         option = match.option
         changes = "Direct" if option.is_direct else "Changes"
         arrival = option.arrival_time or "?"
+        railcard_note = "16-25 Railcard" if option.railcard_applied else "16-25 Railcard NOT confirmed"
         lines.append(
             f"{_format_date(match.travel_date)} {option.departure_time} -> {arrival}  "
-            f"{_format_price(option.price)}  ({changes})  {_build_link(match)}"
+            f"{_format_price(option.price)}  ({changes}, {railcard_note})  {_build_link(match)}"
         )
     extra = len(ordered_matches) - len(shown)
     if extra > 0:
@@ -104,6 +104,7 @@ def _html_row(match: AlertMatch) -> str:
     option = match.option
     changes = "Direct" if option.is_direct else "Changes"
     arrival = option.arrival_time or "?"
+    railcard_note = "Yes" if option.railcard_applied else "Not confirmed"
     link = _build_link(match)
     return (
         "<tr>"
@@ -112,6 +113,7 @@ def _html_row(match: AlertMatch) -> str:
         f"<td>{arrival}</td>"
         f"<td>{_format_price(option.price)}</td>"
         f"<td>{changes}</td>"
+        f"<td>{railcard_note}</td>"
         f'<td><a href="{link}">Book</a></td>'
         "</tr>"
     )
@@ -124,11 +126,10 @@ def _build_html_body(ordered_matches: list[AlertMatch]) -> str:
     extra_html = f"<p>+{extra} more not shown</p>" if extra > 0 else ""
     return (
         "<html><body>"
-        f"<h2>Cheap fares — {config.ORIGIN_NAME} → {config.DESTINATION_NAME} "
-        "(16-25 Railcard)</h2>"
+        f"<h2>Cheap fares — {config.ORIGIN_NAME} → {config.DESTINATION_NAME}</h2>"
         "<table border=\"1\" cellpadding=\"4\" cellspacing=\"0\">"
         "<tr><th>Date</th><th>Departs</th><th>Arrives</th><th>Price</th>"
-        "<th>Direct?</th><th>Link</th></tr>"
+        "<th>Direct?</th><th>16-25 Railcard</th><th>Link</th></tr>"
         f"{rows}"
         "</table>"
         f"{extra_html}"

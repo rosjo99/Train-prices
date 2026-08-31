@@ -6,14 +6,19 @@ tests/fixtures/journey_search_sample.json for the real response shape
 this was written against: a top-level "outwardJourneys" list, each
 journey carrying "timetable.scheduled.{departure,arrival}" as full ISO
 8601 timestamps (own UTC offset already applied) and a "fares" list,
-each fare option optionally carrying a "railcardFares" array of
-{code, prices: {adult, child}} entries.
+each fare option carrying its own "totalPrice" and optionally a
+"railcardFares" array of {code, prices: {adult, child}} entries.
 
-Deliberately price-per-railcard, not price-per-journey: CLAUDE.md
-requires the 16-25 railcard discount to be positively confirmed before
-any alert fires, so this module only ever reports the price of a fare
-that has a matching "railcardFares" entry — never a journey's cheapest
-fare overall, which might not carry a discount at all.
+Price is the cheapest amount found on the journey, full stop — checked
+across every fare's own "totalPrice" *and* every "railcardFares" entry
+matching config.RAILCARD_CODE, whichever is lower (per explicit user
+decision: alert on any fare under threshold, confirmed 16-25 discount
+or not — this project originally required positive railcard
+confirmation before alerting at all, a rule later explicitly dropped in
+favour of simplicity). `railcard_applied` still records whether the
+WINNING price specifically came from a confirmed railcard entry, purely
+as information carried through to the CSV log and the email (see
+src/notifier.py) — it no longer gates whether that price counts.
 """
 
 from __future__ import annotations
@@ -51,17 +56,35 @@ def _to_london_hhmm(iso_timestamp: str | None) -> str | None:
         return None
 
 
-def _find_railcard_fare(journey: dict[str, Any]) -> tuple[str | None, Decimal] | None:
-    """Find the cheapest fare option on `journey` that has a
-    "railcardFares" entry matching config.RAILCARD_CODE.
+def _find_best_fare(journey: dict[str, Any]) -> tuple[str | None, Decimal, bool] | None:
+    """Find the single cheapest price on `journey`, across every fare's
+    own "totalPrice" and every "railcardFares" entry matching
+    config.RAILCARD_CODE.
 
-    Returns (fare_name, price) for the cheapest such fare, or None if no
-    fare on this journey carries that railcard's discount at all — the
-    positive-confirmation signal CLAUDE.md requires, never inferred from
-    the request having asked for a railcard.
+    Returns (fare_name, price, railcard_applied) for the cheapest amount
+    found by either measure, or None if this journey has no fare with a
+    price at all (e.g. an empty "fares" list). `railcard_applied` is
+    True only when the WINNING price specifically came from a matching
+    railcardFares entry — ties are resolved in favour of the railcard
+    entry, since it's the more informative of two otherwise-equal
+    prices. A fare's own totalPrice is a legitimate candidate on its
+    own, not just a fallback for display: a plain, non-railcard fare
+    under threshold is just as alert-worthy as a confirmed-discount one
+    (see this module's docstring for why that's no longer gated).
     """
-    best: tuple[str | None, Decimal] | None = None
+    best_price: Decimal | None = None
+    best_name: str | None = None
+    best_railcard = False
+
     for fare in journey.get("fares", None) or ():
+        fare_name = fare.get("typeDescription")
+
+        total_price = fare.get("totalPrice")
+        if total_price is not None:
+            price = Decimal(total_price) / PENCE_PER_POUND
+            if best_price is None or price < best_price:
+                best_price, best_name, best_railcard = price, fare_name, False
+
         for railcard_fare in fare.get("railcardFares", None) or ():
             if railcard_fare.get("code") != config.RAILCARD_CODE:
                 continue
@@ -70,17 +93,21 @@ def _find_railcard_fare(journey: dict[str, Any]) -> tuple[str | None, Decimal] |
             except (KeyError, TypeError):
                 continue
             price = Decimal(pence) / PENCE_PER_POUND
-            if best is None or price < best[1]:
-                best = (fare.get("typeDescription"), price)
-    return best
+            if best_price is None or price <= best_price:
+                best_price, best_name, best_railcard = price, fare_name, True
+
+    if best_price is None:
+        return None
+    return best_name, best_price, best_railcard
 
 
 def extract_price(journey: dict[str, Any]) -> Decimal | None:
-    """The cheapest config.RAILCARD_CODE-discounted price on `journey`,
-    or None if no fare carries that discount. Kept pure and separately
-    tested — see _find_railcard_fare, which also needs the fare's name.
+    """The single cheapest price found on `journey`, or None if it has
+    no priced fare at all. Kept pure and separately tested — see
+    _find_best_fare, which also needs the fare's name and railcard
+    status.
     """
-    found = _find_railcard_fare(journey)
+    found = _find_best_fare(journey)
     return found[1] if found is not None else None
 
 
@@ -115,11 +142,12 @@ def parse_journeys(raw: dict[str, Any], travel_date: date) -> list[TrainOption]:
             continue
         arrival_time = _to_london_hhmm(scheduled.get("arrival"))
 
-        railcard_fare = _find_railcard_fare(journey)
-        fare_name = railcard_fare[0] if railcard_fare is not None else None
-        price = railcard_fare[1] if railcard_fare is not None else None
-        railcard_applied = railcard_fare is not None
-        sold_out = not railcard_applied
+        best_fare = _find_best_fare(journey)
+        if best_fare is not None:
+            fare_name, price, railcard_applied = best_fare
+        else:
+            fare_name, price, railcard_applied = None, None, False
+        sold_out = price is None
 
         legs = journey.get("legs") or ()
         is_direct = len(legs) <= 1

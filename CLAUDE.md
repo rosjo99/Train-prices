@@ -2,10 +2,11 @@
 
 ## What this project does
 Checks National Rail Enquiries daily for the price of two specific
-Oxford → London Paddington trains and emails an alert when either fare
-falls below GBP 10 with a 16-25 railcard applied. Only travel dates
-that are a Tuesday, Thursday or Friday inside school term time are
-checked.
+Oxford → London Paddington trains (searched with a 16-25 railcard
+applied) and emails an alert when either fare's cheapest price falls
+below GBP 10 — whether or not that price is confirmed as the
+railcard-discounted one (see Route details). Only travel dates that are
+a Tuesday, Thursday or Friday inside school term time are checked.
 
 ## Constraints
 - Must handle NRE's dynamic (client-rendered) journey planner — a
@@ -13,7 +14,8 @@ checked.
   in the form (see Tech decisions)
 - Runs once daily via GitHub Actions cron
 - Email via a free-tier service
-- Prices must reflect 16-25 railcard discount
+- Searches are made with a 16-25 railcard applied; the resulting
+  discount is tracked but does not gate alerting (see Route details)
 - Target days: Tuesday, Thursday, Friday only
 - Only check dates that fall within school term time (see Term dates
   below) — including staff INSET days, but excluding half terms,
@@ -92,12 +94,18 @@ checked.
   07:25 departure and 07:30 departure. Check the price of both.
 - Return: one-way only, no return leg
 - Railcard: 16-25
-- Alert threshold: GBP 10.00 (after railcard discount) for either train.
-  The comparison is strictly `price < 10.00` — a fare of exactly £10.00
-  does **not** trigger an alert.
-- If the railcard discount cannot be positively confirmed in the
-  response, no alert is sent and the run fails loudly. A wrong price in
-  an alert is worse than a missed alert.
+- Alert threshold: GBP 10.00 for either train. The comparison is
+  strictly `price < 10.00` — a fare of exactly £10.00 does **not**
+  trigger an alert. The cheapest price found for a journey is used,
+  whether or not it's confirmed as coming from a 16-25 railcard-priced
+  fare — see the next bullet.
+- Alerting does **not** require the 16-25 railcard discount to be
+  positively confirmed. Any unbooked fare under threshold triggers an
+  alert regardless (the user's explicit call: not alerting on a real
+  sub-£10 fare because its railcard discount specifically couldn't be
+  confirmed is a worse outcome than the reverse). Whether the discount
+  was confirmed is still tracked as `railcard_applied` and shown in both
+  the email and `price-history.csv`, purely as information.
 
 ## Which dates get checked
 The gate applies to **travel dates**, not the day the job happens to run.

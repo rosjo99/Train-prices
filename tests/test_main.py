@@ -310,12 +310,12 @@ def test_hijacked_error_aborts_immediately_like_blocked(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_sub_threshold_price_without_railcard_confirmation_returns_1_no_email(monkeypatch):
-    # src.parser never actually produces a priced-but-unconfirmed
-    # TrainOption (its price is only ever set FROM a matching railcard
-    # fare — see src/parser.py), so this exercises the scenario by
-    # stubbing parser.parse_journeys directly with a hand-built option,
-    # rather than trying to coax it out of a raw response.
+def test_sub_threshold_price_without_railcard_confirmation_still_sends_alert(monkeypatch):
+    # Per explicit decision, alerting no longer requires a positively
+    # confirmed 16-25 railcard discount — any unbooked fare under
+    # threshold alerts, confirmed or not (see src/parser.py's module
+    # docstring). This stubs parser.parse_journeys directly with a
+    # hand-built unconfirmed option to exercise that path.
     travel_date = date(2026, 9, 8)
     unconfirmed_option = _option(price=Decimal("5.00"), railcard_applied=False, departure_time="07:25")
     _install_fake_scraper(monkeypatch, {travel_date: _raw()})
@@ -325,8 +325,11 @@ def test_sub_threshold_price_without_railcard_confirmation_returns_1_no_email(mo
 
     result = main.main(today=TERM_TIME_DAY)
 
-    assert result == 1
-    assert send_calls == []
+    assert result == 0
+    assert len(send_calls) == 1
+    matches = send_calls[0]["matches"]
+    assert matches[0].option.price == Decimal("5.00")
+    assert matches[0].option.railcard_applied is False
 
 
 # ---------------------------------------------------------------------------
@@ -488,10 +491,9 @@ def _option(price=Decimal("8.70"), currency="GBP", railcard_applied=True, depart
 def test_evaluate_excludes_non_gbp_currency():
     travel_date = date(2026, 9, 8)
     option = _option(currency="EUR")
-    matches, railcard_unconfirmed = main.evaluate({travel_date: {"07:25": option}})
+    matches = main.evaluate({travel_date: {"07:25": option}})
 
     assert matches == []
-    assert railcard_unconfirmed is False
 
 
 def test_evaluate_deduplicates_same_date_and_departure_time():
@@ -499,18 +501,22 @@ def test_evaluate_deduplicates_same_date_and_departure_time():
     option = _option(departure_time="07:25")
     # Same option, duplicated under two different target-time keys — the
     # dedup key is the option's OWN departure_time, not the dict key.
-    matches, _ = main.evaluate({travel_date: {"07:25": option, "07:30": option}})
+    matches = main.evaluate({travel_date: {"07:25": option, "07:30": option}})
 
     assert len(matches) == 1
 
 
-def test_evaluate_railcard_unconfirmed_flag():
+def test_evaluate_alerts_even_when_railcard_unconfirmed():
+    # Per explicit decision, a sub-threshold price alerts regardless of
+    # whether the 16-25 railcard discount was positively confirmed — see
+    # src/parser.py's module docstring. railcard_applied is carried
+    # through as informational metadata only.
     travel_date = date(2026, 9, 8)
     option = _option(railcard_applied=False)
-    matches, railcard_unconfirmed = main.evaluate({travel_date: {"07:25": option}})
+    matches = main.evaluate({travel_date: {"07:25": option}})
 
-    assert matches == []
-    assert railcard_unconfirmed is True
+    assert len(matches) == 1
+    assert matches[0].option.railcard_applied is False
 
 
 # ---------------------------------------------------------------------------
@@ -651,9 +657,10 @@ def test_test_run_notifier_failure_returns_1(monkeypatch):
     assert result == 1
 
 
-def test_test_run_does_not_override_railcard_unconfirmed_safety(monkeypatch):
-    # TEST_RUN must never bypass the "never send a wrong price" rule —
-    # it's exactly the kind of thing worth confirming still holds.
+def test_test_run_best_effort_includes_railcard_unconfirmed_fares(monkeypatch):
+    # TEST_RUN's "send the cheapest real fare found" fallback no longer
+    # filters on railcard_applied — an unconfirmed-discount fare is just
+    # as real as a confirmed one (see src/parser.py's module docstring).
     monkeypatch.setattr(main.config, "TEST_RUN", True)
     travel_date = date(2026, 9, 8)
     unconfirmed_option = _option(price=Decimal("45.00"), railcard_applied=False, departure_time="07:25")
@@ -664,8 +671,11 @@ def test_test_run_does_not_override_railcard_unconfirmed_safety(monkeypatch):
 
     result = main.main(today=TERM_TIME_DAY)
 
-    assert result == 1
-    assert send_calls == []
+    assert result == 0
+    assert len(send_calls) == 1
+    matches = send_calls[0]["matches"]
+    assert matches[0].option.price == Decimal("45.00")
+    assert matches[0].option.railcard_applied is False
 
 
 # ---------------------------------------------------------------------------
