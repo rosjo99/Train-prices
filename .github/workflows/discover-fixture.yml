@@ -1,12 +1,18 @@
 name: Discover fixture (manual dev tool)
 
-# Manually-triggered helper for Task 3 of docs/plans/001-train-price-alert.md:
-# runs scripts/capture_fixture.py against a real date and prints the result
-# to the job log, since GitHub Actions has real internet access that the
-# interactive development sandbox this project was built in does not.
-# Useful for regenerating tests/fixtures/journey_search_sample.json if
-# Trainline ever changes its response schema. No secrets required — this
-# only fetches public train prices.
+# Exploratory probe scripts only (scripts/probe_nre.py,
+# scripts/probe_nre_deeplink.py) — throwaway dev tools used to figure out
+# whether/how National Rail Enquiries could be scraped at all. Both
+# investigations are now complete and their findings are implemented in
+# src/scraper.py (see docs/plans/001-train-price-alert.md §1.4), so
+# neither job here runs automatically anymore; both are workflow_dispatch
+# only, kept around only in case the interactive-form or deep-link
+# approach needs revisiting later. The one job that still matters for
+# ongoing work — capturing a real production fixture via
+# scripts/capture_fixture.py — lives in its own separate workflow,
+# capture-fixture.yml, specifically so dispatching it doesn't also
+# re-run these probes (they used to share this file and a single
+# workflow_dispatch trigger fired all three jobs at once).
 
 on:
   # workflow_dispatch alone won't work until this file exists on the
@@ -19,69 +25,16 @@ on:
       - claude/train-price-alert-setup-ks7rfg
     paths:
       - ".github/workflows/discover-fixture.yml"
-      - "scripts/capture_fixture.py"
       - "scripts/probe_nre.py"
       - "scripts/probe_nre_deeplink.py"
-      - "src/scraper.py"
-      - "src/config.py"
   workflow_dispatch:
-    inputs:
-      date:
-        description: "Travel date to capture, YYYY-MM-DD (should be a real term-time Tue/Thu/Fri)"
-        required: true
-        default: "2026-09-08"
 
 jobs:
-  discover:
-    # Trainline is confirmed blocked by DataDome on GitHub-hosted runners
-    # (two independent runs, both blocked immediately) — no need to keep
-    # re-running this on every push while iterating on the NRE probe below.
-    # Still runnable on demand via workflow_dispatch if needed later.
-    if: github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-      - run: pip install -r requirements.txt
-      - run: playwright install --with-deps chromium
-      - name: Capture fixture
-        env:
-          # `python scripts/capture_fixture.py` (direct script invocation,
-          # matching the plan's documented usage) only puts scripts/ on
-          # sys.path, not the repo root, so `from src.scraper import ...`
-          # can't be found without this. src/main.py's real entrypoint runs
-          # via `python -m src.main` instead, which doesn't need this.
-          PYTHONPATH: ${{ github.workspace }}
-        run: |
-          python scripts/capture_fixture.py \
-            --date "${{ inputs.date || '2026-09-08' }}" \
-            --out /tmp/fixture.json \
-            --artifacts-dir /tmp/artifacts
-      - name: Print captured fixture
-        if: always()
-        run: |
-          echo "=== /tmp/fixture.json ==="
-          cat /tmp/fixture.json 2>/dev/null || echo "(no fixture written)"
-      - name: Print debug artifacts (present only on failure)
-        if: always()
-        run: |
-          echo "=== /tmp/artifacts listing ==="
-          ls -la /tmp/artifacts 2>/dev/null || echo "(no artifacts dir)"
-          echo "=== captured raw response, if any ==="
-          cat /tmp/artifacts/response-*.json 2>/dev/null || echo "(none)"
-          echo "=== page HTML, first 200 lines, if any ==="
-          head -200 /tmp/artifacts/page-*.html 2>/dev/null || echo "(none)"
-
   probe-nre:
-    # Superseded for now by probe-nre-deeplink below, which tests
-    # navigating straight to NRE's query-string-encoded journey-planner
-    # URL instead of driving the interactive form. Still runnable on
-    # demand via workflow_dispatch if the interactive flow needs
-    # revisiting later.
+    # Superseded by probe-nre-deeplink below, which tests navigating
+    # straight to NRE's query-string-encoded journey-planner URL instead
+    # of driving the interactive form. Kept only in case the interactive
+    # flow needs revisiting later.
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -122,13 +75,11 @@ jobs:
           if-no-files-found: ignore
 
   probe-nre-deeplink:
-    # Tests whether NRE's /journey-planner/?origin=...&destination=...
-    # &leavingDate=...&railcards=...  URL format (found by the user in a
-    # real example search) pre-fills — or even auto-submits — the
-    # journey search, sidestepping every UI-interaction bug hit in the
-    # probe-nre job above (decoy click, autocomplete listbox scoping, a
-    # React-controlled checkbox/date-button that don't visually update
-    # from a raw click).
+    # Confirmed working (docs/plans/001-train-price-alert.md §1.4) and
+    # implemented in src/scraper.py — this investigation is done. Kept
+    # workflow_dispatch-only in case the deep-link approach ever needs
+    # re-probing (e.g. NRE changes the URL format or response schema).
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
