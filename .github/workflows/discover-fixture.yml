@@ -20,6 +20,7 @@ on:
     paths:
       - ".github/workflows/discover-fixture.yml"
       - "scripts/capture_fixture.py"
+      - "scripts/probe_nre.py"
       - "src/scraper.py"
       - "src/config.py"
   workflow_dispatch:
@@ -68,3 +69,30 @@ jobs:
           cat /tmp/artifacts/response-*.json 2>/dev/null || echo "(none)"
           echo "=== page HTML, first 200 lines, if any ==="
           head -200 /tmp/artifacts/page-*.html 2>/dev/null || echo "(none)"
+
+  probe-nre:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: playwright install --with-deps chromium
+      - name: Probe National Rail Enquiries
+        run: |
+          python scripts/probe_nre.py --date "2026-09-08" --out /tmp/nre_probe
+      - name: Print captured responses
+        if: always()
+        run: |
+          echo "=== captured_responses.json ==="
+          cat /tmp/nre_probe/captured_responses.json 2>/dev/null || echo "(none)"
+      - name: Print page HTML snapshots (truncated)
+        if: always()
+        run: |
+          for f in /tmp/nre_probe/*.html; do
+            echo "=== $f (first 100 lines) ==="
+            head -100 "$f" 2>/dev/null
+          done
