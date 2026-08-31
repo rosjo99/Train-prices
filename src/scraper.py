@@ -173,6 +173,21 @@ def _looks_hijacked(current_url: str) -> bool:
     return not host.endswith(config.NRE_HOST_SUFFIX)
 
 
+def _is_journey_planner_response(url: str) -> bool:
+    """True only for the specific journey-search endpoint, not just any
+    response from JOURNEY_PLANNER_API_HOST. The host also serves sibling
+    endpoints (e.g. "/fare-info") for other page data — matching on host
+    alone let a sibling endpoint's response overwrite the real one
+    whenever it happened to arrive later in the same page load, which
+    produced a response with no "outwardJourneys" key at all (observed
+    live: a real run's captured "body" turned out to be the "/fare-info"
+    response instead).
+    """
+    if config.JOURNEY_PLANNER_API_HOST not in url:
+        return False
+    return urlparse(url).path.rstrip("/") == config.JOURNEY_PLANNER_API_PATH
+
+
 def _make_response_handler(captured: dict[str, Any]) -> Callable[[Any], None]:
     """Build a Page "response" handler that captures the journey-planner XHR.
 
@@ -186,7 +201,7 @@ def _make_response_handler(captured: dict[str, Any]) -> Callable[[Any], None]:
             url = response.url
         except Exception:
             return
-        if config.JOURNEY_PLANNER_API_HOST not in url:
+        if not _is_journey_planner_response(url):
             return
         try:
             status = response.status

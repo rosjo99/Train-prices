@@ -99,6 +99,14 @@ def build_journey_planner_url(travel_date: date, hour: str, minute: str) -> str:
 # (see CLAUDE.md's Tech decisions for the full comparison).
 JOURNEY_PLANNER_API_HOST = "jpservices.nationalrail.co.uk"
 
+# The specific endpoint on JOURNEY_PLANNER_API_HOST that returns the
+# outwardJourneys/fares payload this scraper needs. The same host also
+# serves sibling endpoints (observed live: "/fare-info") for other data
+# the page loads — src.scraper's response handler must match on this path
+# too, not just the host, or it can capture the wrong endpoint's response
+# whenever that sibling happens to reply after the real one.
+JOURNEY_PLANNER_API_PATH = "/journey-planner"
+
 # Every page on nationalrail.co.uk loads third-party ad/tracking scripts,
 # one of which was observed (during interactive UI-driven probing, not the
 # deep-link approach this scraper actually uses) redirecting the whole tab
