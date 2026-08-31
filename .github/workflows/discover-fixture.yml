@@ -42,6 +42,13 @@ jobs:
       - run: pip install -r requirements.txt
       - run: playwright install --with-deps chromium
       - name: Capture fixture
+        env:
+          # `python scripts/capture_fixture.py` (direct script invocation,
+          # matching the plan's documented usage) only puts scripts/ on
+          # sys.path, not the repo root, so `from src.scraper import ...`
+          # can't be found without this. src/main.py's real entrypoint runs
+          # via `python -m src.main` instead, which doesn't need this.
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           python scripts/capture_fixture.py \
             --date "${{ inputs.date || '2026-09-08' }}" \
