@@ -131,6 +131,52 @@ Mitigation stays the same as §1.3: self-hosted runner with a residential
 IP if GitHub-hosted runners get blocked. No proxies/stealth/CAPTCHA
 solvers.
 
+### 2.3 Excluding already-booked dates (decided)
+
+Once the user books a ticket for a date, that date should stop being
+checked — both to cut the daily workload down from §2.2's ~100 dates and
+because an alert about a fare on a date already booked is noise.
+
+Decision: a plain text file at the **repo root**, `booked-dates.txt`,
+one `YYYY-MM-DD` per line, `#` for comments, blank lines ignored. This
+is the "no coding involved" mechanism the user asked for: editing it is
+a matter of opening the file on github.com, clicking the pencil (edit)
+icon, adding one line, and committing directly from the browser — no
+local checkout, no Python, no PR review needed for a personal repo. The
+next scheduled run picks it up automatically since it reads the file
+fresh from the checked-out repo on every run.
+
+Rejected alternatives: a repo secret or Actions variable (edits require
+the Settings UI, worse UX, secrets aren't meant to be listed items,
+awkward to view what's already there at a glance); a GitHub Issue label
+per date (over-engineered — parsing issue titles/labels is more moving
+parts for the same result); a `workflow_dispatch` input (does not
+persist across scheduled runs — it would have to be re-entered every
+time). A committed text file is the simplest thing a non-programmer can
+maintain and is fully version-controlled for free.
+
+`src/booked_dates.py`:
+- `load_booked_dates(path: Path) -> set[date]` — reads the file if it
+  exists; returns `set()` if the file is missing entirely (first-time
+  setup, or the user simply hasn't booked anything yet, must not be an
+  error). Skips blank lines and lines starting with `#`. Parses the rest
+  with `date.fromisoformat`; a line that fails to parse is **logged as a
+  warning and skipped**, not fatal — one typo in a hand-edited file must
+  not take down the whole day's price check.
+- No pruning of past dates is needed or implemented: `main()` only ever
+  considers candidates from tomorrow onward (§2.2), so a booked date
+  that has already passed simply never matches anything and is harmless
+  clutter. The README should mention it's fine to leave old lines or
+  delete them, purely for tidiness.
+
+`config.BOOKED_DATES_PATH = Path("booked-dates.txt")`, resolved relative
+to the process's working directory (the repo root, both locally and in
+the Actions job).
+
+`main()` filters candidates through this set before scraping anything
+(see Task 6, updated below) — a booked date costs zero requests, not
+just zero alerts.
+
 ### 1.4 Checkable-date counts (computed, not estimated)
 
 Computed directly from the `CLAUDE.md` term data with the same weekday
@@ -153,10 +199,12 @@ to size the workflow timeout in Task 7.
 .github/workflows/price-check.yml   # cron + manual dispatch
 requirements.txt
 README.md                           # setup, secrets, how to update term dates
+booked-dates.txt                    # user-edited, no-code: dates already booked
 .gitignore
 src/__init__.py
 src/config.py                       # env + constants (threshold, target times, URNs)
 src/term_dates.py                   # term data, is_checkable_day(), CLI
+src/booked_dates.py                 # reads booked-dates.txt
 src/models.py                       # TrainOption dataclass
 src/scraper.py                      # Playwright → raw journey-search JSON
 src/parser.py                       # raw JSON → list[TrainOption]
@@ -164,6 +212,7 @@ src/notifier.py                     # Resend email
 src/main.py                         # orchestration, exit codes
 scripts/capture_fixture.py          # dev tool: save a real response as a fixture
 tests/test_term_dates.py
+tests/test_booked_dates.py
 tests/test_parser.py
 tests/test_notifier.py
 tests/test_main.py
@@ -211,6 +260,9 @@ time; pin exactly, no ranges.)
   16-25 eligibility window as of the target travel dates. Add a comment
   that this needs revisiting if the tool is still running past 2028.
 - `LONDON = ZoneInfo("Europe/London")`
+- `BOOKED_DATES_PATH = Path("booked-dates.txt")` — read by Task 6's
+  `booked_dates.load_booked_dates()`; not env-configurable, it's a
+  committed file at a fixed repo-relative path.
 - `MAX_DATES` from env `MAX_DATES`, optional, default `None` (no cap) —
   when set, must parse as a positive int; used only to cap the candidate
   list for manual/debug `workflow_dispatch` runs, never by the scheduled
@@ -538,19 +590,42 @@ add proxies, CAPTCHA solvers, or stealth plugins. Escalate to Plan B
 
 ---
 
-### Task 6 — Orchestrator and alert decision
+### Task 6 — Orchestrator, booked-date exclusion, and alert decision
 
-**Create:** `src/main.py`, `tests/test_main.py`
+**Create:** `src/main.py`, `src/booked_dates.py`, `booked-dates.txt`,
+`tests/test_main.py`, `tests/test_booked_dates.py`
 
 **What the code does**
 
+`src/booked_dates.py`:
+- `load_booked_dates(path: Path) -> set[date]` per §2.3 of this plan:
+  missing file → `set()`; blank lines and `#`-comments ignored; each
+  remaining line parsed with `date.fromisoformat`; a line that fails to
+  parse is logged as a warning (including the line number and raw text)
+  and skipped, never raises.
+
+`booked-dates.txt` (committed with placeholder content, not empty, so
+the user sees the format immediately):
+```
+# Dates you've already booked a ticket for, one per line as YYYY-MM-DD.
+# The tool will stop checking these dates — no code changes needed.
+# To add one: click the pencil (edit) icon on this file on github.com,
+# add a line, and commit. Lines starting with # are ignored, so this
+# example below does nothing until you remove the leading #.
+# 2026-09-08
+```
+
 `main() -> int`:
 1. Compute `today = datetime.now(config.LONDON).date()`.
-2. `candidates = term_dates.checkable_dates(today + 1 day, term_dates.LAST_KNOWN_DATE)`
+2. `all_candidates = term_dates.checkable_dates(today + 1 day, term_dates.LAST_KNOWN_DATE)`
    — every remaining checkable date to the end of the school year, not a
-   fixed horizon. If `config.MAX_DATES` is set (debug/manual runs only),
-   truncate to the first `MAX_DATES` candidates.
-3. If empty → log `"No checkable travel dates remaining this school year — nothing to do."`, return `0`. **No browser launch, no email.**
+   fixed horizon.
+   `booked = booked_dates.load_booked_dates(config.BOOKED_DATES_PATH)`.
+   `candidates = [d for d in all_candidates if d not in booked]`; log how
+   many were skipped as already booked (and which dates, at INFO level).
+   If `config.MAX_DATES` is set (debug/manual runs only), truncate
+   `candidates` to the first `MAX_DATES` entries.
+3. If `candidates` is empty → log `"No checkable travel dates remaining this school year — nothing to do."` (or, if `all_candidates` was non-empty but all booked, `"All remaining dates are already booked — nothing to do."`), return `0`. **No browser launch, no email.**
 4. Load secrets *before* scraping, so a misconfiguration fails fast (skip
    in `DRY_RUN`).
 5. For each candidate date, in ascending order, with a 5–15s randomised
@@ -601,6 +676,21 @@ monkeypatching `datetime`)
   `send_alert` **not** called.
 - `DRY_RUN=1` → no secrets required, `send_alert` receives `dry_run=True`.
 - Notifier raises → returns 1.
+- `booked-dates.txt` lists tomorrow's date → that date is excluded from
+  `candidates` and the scraper is never called for it.
+- `booked-dates.txt` lists every remaining candidate → returns 0,
+  scraper never called, "all remaining dates are already booked" logged.
+- Missing `booked-dates.txt` → behaves exactly as if the file were
+  empty (no candidates excluded, no error).
+
+`tests/test_booked_dates.py` acceptance criteria:
+- A file with `2026-09-08\n# comment\n\n2026-10-01` parses to exactly
+  `{date(2026,9,8), date(2026,10,1)}`.
+- A missing path → `set()`, no exception.
+- A line `not-a-date` → skipped with a logged warning; the other valid
+  lines in the same file still parse correctly.
+- An entirely empty file → `set()`.
+- Duplicate dates in the file → collapse to one (it's a set).
 
 **Edge cases**
 - Run at 23:50 UTC in winter vs summer — assert `today` is derived from
@@ -684,9 +774,14 @@ pull_request — no secrets, no Playwright browsers needed.
 
 **README.md** must cover:
 - What the tool does, in three sentences.
+- **How to mark a date as already booked** (no coding involved): open
+  `booked-dates.txt` on github.com, click the pencil (edit) icon, add a
+  line `YYYY-MM-DD`, commit directly from the browser. This is the
+  section a non-programmer will read most often — put it first, above
+  the term-dates section, with a screenshot-free step-by-step.
 - **How to update term dates each school year**: edit the `TERMS` block
   in `src/term_dates.py`, then run `python -m src.term_dates --list` to
-  verify. This is the section a non-programmer will read — make it
+  verify. This is also a section a non-programmer will read — make it
   explicit and put it near the top.
 - Required repository secrets, with a table: `RESEND_API_KEY`,
   `ALERT_EMAIL_TO`, `ALERT_EMAIL_FROM` (optional), and the path

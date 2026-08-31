@@ -96,6 +96,20 @@ compounds the DataDome IP-reputation risk noted in Tech decisions above
 — see `docs/plans/001-train-price-alert.md` §2.2/§1.4 for the numbers
 and the accepted tradeoff.
 
+## Marking a date as already booked (no coding involved)
+
+Once a ticket is booked for a date, that date should stop being checked.
+This is controlled by a plain text file at the repo root,
+`booked-dates.txt` — one `YYYY-MM-DD` per line, `#` for comments, blank
+lines ignored. To use it: open the file on github.com, click the pencil
+(edit) icon, add a line with the date, and commit directly from the
+browser — no local setup, no Python, no pull request needed. The next
+scheduled run reads the file fresh and skips every date listed in it
+before doing any scraping (so a booked date costs zero requests, not
+just zero alerts). See `docs/plans/001-train-price-alert.md` §2.3 for
+the design rationale and the parsing rules (a malformed line is skipped
+with a warning rather than failing the whole run).
+
 ## Term dates (only check Tue/Thu/Fri that fall within these ranges)
 
 Dates are inclusive. A day only counts if it is Tuesday, Thursday, or
