@@ -1,0 +1,16 @@
+{
+  "_note": "Hand-edited from the real captured shape: 'fares' emptied out to exercise the sold_out/price=None path.",
+  "outwardJourneys": [
+    {
+      "id": 1,
+      "timetable": {
+        "scheduled": {
+          "departure": "2026-09-08T07:25:00+01:00",
+          "arrival": "2026-09-08T08:26:00+01:00"
+        }
+      },
+      "legs": [{}],
+      "fares": []
+    }
+  ]
+}

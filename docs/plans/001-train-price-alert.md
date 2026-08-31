@@ -621,8 +621,22 @@ this project's testing, worth investigating before working around.
 
 ### Task 4 — Response parser
 
-**Create:** `src/parser.py`, `tests/test_parser.py`
-**Modify:** `tests/fixtures/` (add hand-edited variant fixtures)
+**Status: implemented.**
+
+**Created:** `src/parser.py`, `tests/test_parser.py`,
+`tests/fixtures/journey_search_empty.json`,
+`journey_search_missing_container.json`,
+`journey_search_fareless_journey.json`, `journey_search_no_railcard.json`,
+`journey_search_only_0725.json`
+
+One implementation decision beyond the spec below: `sold_out` is defined
+as "no fare on this journey carries a `railcardFares` entry for
+`config.RAILCARD_CODE`" — the same condition as `railcard_applied is
+False` — rather than "the `fares` list is empty". A fare existing without
+our railcard's discount is functionally identical to no fare existing at
+all for this tool's purposes (no price can ever be positively confirmed
+and compared to the threshold), so both collapse to the same state. All
+84 tests pass (`python -m pytest -q`), no `float` in the module.
 
 **What the code does**
 

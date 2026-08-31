@@ -1,0 +1,23 @@
+{
+  "_note": "Hand-edited from the real captured shape: the fare's 'railcardFares' array emptied out to exercise railcard_applied=False (the fare itself still exists and has a price, unlike journey_search_fareless_journey.json).",
+  "outwardJourneys": [
+    {
+      "id": 1,
+      "timetable": {
+        "scheduled": {
+          "departure": "2026-09-08T07:25:00+01:00",
+          "arrival": "2026-09-08T08:26:00+01:00"
+        }
+      },
+      "legs": [{}],
+      "fares": [
+        {
+          "typeDescription": "Anytime Day Single",
+          "totalPrice": 5000,
+          "undiscountedPrices": {"adult": 5000, "child": 2500},
+          "railcardFares": []
+        }
+      ]
+    }
+  ]
+}
