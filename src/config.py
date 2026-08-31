@@ -192,6 +192,8 @@ class Secrets:
     # repr=False so the API key never appears in a repr()/log line by
     # accident (e.g. an uncaught exception printing a Secrets instance).
     resend_api_key: str = field(repr=False)
+    # One address, or several comma-separated (e.g. "a@x.com, b@y.com") —
+    # split into a list at send time by src.notifier._parse_recipients.
     email_to: str
     email_from: str
 

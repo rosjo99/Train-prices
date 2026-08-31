@@ -819,6 +819,22 @@ All 98 tests pass (`python -m pytest -q`), no `float` in the module.
 - Very long match list → cap the emailed table at 20 rows plus a
   "+N more" line.
 
+#### Revision: multiple comma-separated recipients
+
+`ALERT_EMAIL_TO` may hold more than one address, comma-separated (e.g.
+`a@example.com, b@example.com`). `notifier._parse_recipients()` splits,
+strips, and drops empties, and the Resend payload's `"to"` is always
+sent as a list (Resend accepts either a string or a list of up to 50
+addresses, so sending a list unconditionally needs no single/multi
+special-casing). The `Secrets.email_to` field itself is unchanged — it
+stays the raw string from the environment; only `send_alert` parses it,
+right before building the payload. This does **not** by itself make
+Resend deliver to a second address: the free sandbox sender
+(`onboarding@resend.dev`) only ever delivers to the Resend account
+owner's own address, so a second, different recipient needs a verified
+domain in Resend and an `ALERT_EMAIL_FROM` address on it — see README.md
+for the verification steps.
+
 #### Revision: per-row railcard-confirmation column
 
 Following §2.1's revision (alerting no longer requires railcard

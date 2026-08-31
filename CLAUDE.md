@@ -77,10 +77,14 @@ a Tuesday, Thursday or Friday inside school term time are checked.
   days; any commit or manual dispatch re-arms them.
 - **Email service:** Resend free tier (3,000 emails/month) via a single
   `POST https://api.resend.com/emails` with a Bearer token. No SMTP,
-  OAuth, or app-password rotation. The free `onboarding@resend.dev`
-  sender may only deliver to the Resend account owner's own address,
-  which is exactly this project's recipient, so no domain verification is
-  needed.
+  OAuth, or app-password rotation. `ALERT_EMAIL_TO` may hold one or more
+  comma-separated addresses (`src.notifier._parse_recipients` splits
+  them, and Resend's `to` field is always sent as a list). The free
+  `onboarding@resend.dev` sender may only deliver to the Resend account
+  owner's own address, so sending to more than one recipient — or to any
+  recipient other than the account owner — requires verifying a domain
+  in Resend first and setting `ALERT_EMAIL_FROM` to an address on it
+  (see README.md's "Sending to more than one address").
 - **Secrets:** GitHub Actions repository secrets `RESEND_API_KEY`,
   `ALERT_EMAIL_TO`, and optional `ALERT_EMAIL_FROM`, injected as step
   `env:` vars. Never committed, never logged; the secrets dataclass

@@ -94,11 +94,36 @@ repository secret:
 | Secret | Required | Notes |
 | --- | --- | --- |
 | `RESEND_API_KEY` | Yes | From your [Resend](https://resend.com) account (free tier: 3,000 emails/month). Settings → API Keys → Create API Key. |
-| `ALERT_EMAIL_TO` | Yes | The address alerts (and test emails) are sent to. |
-| `ALERT_EMAIL_FROM` | No | Defaults to `Train Alerts <onboarding@resend.dev>`. The free Resend sender can only deliver to the Resend **account owner's own address** — if `ALERT_EMAIL_TO` is someone else's address, verify a domain in Resend first and set this to an address on it. |
+| `ALERT_EMAIL_TO` | Yes | The address alerts (and test emails) are sent to. For more than one recipient, separate addresses with commas, e.g. `a@example.com, b@example.com`. |
+| `ALERT_EMAIL_FROM` | No | Defaults to `Train Alerts <onboarding@resend.dev>`. The free Resend sender can only deliver to the Resend **account owner's own address** — if `ALERT_EMAIL_TO` names any other address (including a second recipient), verify a domain in Resend first and set this to an address on it. |
 
 No secret is ever logged or can appear in an email/exception body — see
 `src/notifier.py`.
+
+### Sending to more than one address
+
+The code supports multiple recipients out of the box — just put more
+than one address in `ALERT_EMAIL_TO`, comma-separated. The blocker is
+Resend's own free-tier restriction, not this tool: **the sandbox sender
+`onboarding@resend.dev` can only ever deliver to the single address that
+owns the Resend account**, so a second, different address will silently
+fail to receive anything even though the run reports success. To
+actually deliver to two (or more) addresses:
+
+1. In Resend, go to **Domains** → **Add Domain**, and add a domain you
+   own (a free domain-provider subdomain works too, as long as you can
+   edit its DNS).
+2. Add the DNS records Resend shows you (SPF/DKIM, usually 2-3 TXT/CNAME
+   records) at your domain registrar, then click **Verify** in Resend —
+   this can take a few minutes to propagate.
+3. Once verified, set `ALERT_EMAIL_FROM` to an address on that domain,
+   e.g. `Train Alerts <alerts@yourdomain.com>` — this is what lifts the
+   "owner's own address only" restriction.
+4. `ALERT_EMAIL_TO` can then list any addresses, e.g.
+   `you@example.com, partner@example.com`.
+
+This is still on Resend's free tier (verifying a domain costs nothing) —
+it's a one-time setup, not an upgrade.
 
 ## Running a test
 

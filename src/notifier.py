@@ -51,6 +51,14 @@ def _redact(text: str, secret: str) -> str:
     return text.replace(secret, "***REDACTED***")
 
 
+def _parse_recipients(email_to: str) -> list[str]:
+    """ALERT_EMAIL_TO holds one or more comma-separated addresses (e.g.
+    "a@example.com, b@example.com") — split, strip, and drop empties so a
+    stray trailing comma doesn't send an empty "to" entry to Resend.
+    """
+    return [addr.strip() for addr in email_to.split(",") if addr.strip()]
+
+
 def _format_price(price: Decimal) -> str:
     # Decimal's own __format__ handles the 'f' presentation type
     # natively, with no conversion to a binary float anywhere in the
@@ -154,10 +162,11 @@ def send_alert(
     subject = _build_subject(ordered)
     text_body = _build_text_body(ordered)
     html_body = _build_html_body(ordered)
+    recipients = _parse_recipients(secrets.email_to)
 
     if dry_run:
         print("=== DRY RUN: email not sent ===")
-        print(f"To: {secrets.email_to}")
+        print(f"To: {', '.join(recipients)}")
         print(f"From: {secrets.email_from}")
         print(f"Subject: {subject}")
         print()
@@ -166,10 +175,12 @@ def send_alert(
 
     # requests serialises `json=` as UTF-8 automatically (via its own
     # json.dumps + explicit utf-8 encode), so the £/-> characters in the
-    # body need no manual encoding here.
+    # body need no manual encoding here. Resend accepts "to" as either a
+    # single string or a list of up to 50 addresses — always sending a
+    # list here means one or many recipients need no special-casing.
     payload = {
         "from": secrets.email_from,
-        "to": secrets.email_to,
+        "to": recipients,
         "subject": subject,
         "text": text_body,
         "html": html_body,

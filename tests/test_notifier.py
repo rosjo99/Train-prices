@@ -130,10 +130,24 @@ def test_successful_send_returns_none_with_correct_request(monkeypatch):
     call = poster.calls[0]
     assert call["url"] == notifier.RESEND_URL
     assert call["headers"]["Authorization"] == f"Bearer {SECRETS.resend_api_key}"
-    assert call["json"]["to"] == SECRETS.email_to
+    assert call["json"]["to"] == [SECRETS.email_to]
     assert call["json"]["from"] == SECRETS.email_from
     assert "£8.70" in call["json"]["text"]
     assert "£8.70" in call["json"]["html"]
+
+
+def test_comma_separated_email_to_sends_to_every_address(monkeypatch):
+    secrets = Secrets(
+        resend_api_key="re_secret_test_key_12345",
+        email_to="a@example.com, b@example.com,,c@example.com ",
+        email_from="Train Alerts <onboarding@resend.dev>",
+    )
+    poster = RecordingPost([FakeResponse(200)])
+    monkeypatch.setattr(notifier.requests, "post", poster)
+
+    send_alert([_match()], secrets)
+
+    assert poster.calls[0]["json"]["to"] == ["a@example.com", "b@example.com", "c@example.com"]
 
 
 # ---------------------------------------------------------------------------
