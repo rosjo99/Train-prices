@@ -140,7 +140,27 @@ def main() -> int:
         # has already started navigating away.
         context.add_init_script(
             r"""
-            window.open = () => { console.log('[probe] window.open suppressed'); return null; };
+            // Evidence from a previous run: window.open() gets called, we
+            // suppressed it by returning null, and ~68ms later the SAME
+            // script fell back to a same-tab redirect that .assign()/
+            // .replace() overrides didn't catch — meaning it wasn't calling
+            // those methods, and returning null (a standard "popup blocked"
+            // signal) is itself what triggers this fallback-to-same-tab
+            // logic. Test A: return a truthy, window-shaped dummy object
+            // instead of null, so the calling script believes the popup
+            // succeeded and never reaches its fallback branch at all.
+            window.open = () => {
+              console.log('[probe] window.open faked (dummy object returned)');
+              return {
+                closed: false,
+                close: () => {},
+                focus: () => {},
+                blur: () => {},
+                postMessage: () => {},
+                location: { href: 'about:blank' },
+                document: { write: () => {}, close: () => {} },
+              };
+            };
             try {
               const origAssign = window.location.assign.bind(window.location);
               const origReplace = window.location.replace.bind(window.location);
@@ -160,6 +180,38 @@ def main() -> int:
               };
             } catch (e) {
               console.log('[probe] location override failed: ' + e);
+            }
+            // Test B, independent of A: try to intercept a direct
+            // `location.href = url` assignment (neither assign() nor
+            // replace(), the most common plain redirect pattern) by
+            // overriding the href setter on Location.prototype. Location
+            // objects are spec-mandated to resist exactly this kind of
+            // override for cross-origin security reasons, so this may
+            // simply fail — caught safely either way, it's a free attempt
+            // layered on top of A, not a replacement for it.
+            try {
+              const locProto = Object.getPrototypeOf(window.location);
+              const hrefDesc = Object.getOwnPropertyDescriptor(locProto, 'href');
+              if (hrefDesc && hrefDesc.configurable && hrefDesc.set) {
+                const originalSet = hrefDesc.set.bind(window.location);
+                Object.defineProperty(locProto, 'href', {
+                  configurable: true,
+                  enumerable: hrefDesc.enumerable,
+                  get: hrefDesc.get,
+                  set: function(url) {
+                    if (!String(url).includes('nationalrail.co.uk')) {
+                      console.log('[probe] location.href setter suppressed: ' + url);
+                      return;
+                    }
+                    return originalSet(url);
+                  },
+                });
+                console.log('[probe] location.href setter override installed');
+              } else {
+                console.log('[probe] location.href descriptor not configurable, skipped');
+              }
+            } catch (e) {
+              console.log('[probe] location.href override failed: ' + e);
             }
             """
         )
