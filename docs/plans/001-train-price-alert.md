@@ -360,7 +360,10 @@ need no DOB**):
   list for manual/debug `workflow_dispatch` runs, never by the scheduled
   cron run. Raise `ConfigError` if set but not a positive int.
 - `DRY_RUN` from env `DRY_RUN` — truthy values `1/true/yes` (case
-  insensitive).
+  insensitive). **Removed in Task 7's revision** — replaced by
+  `SKIP_TIME_GATE`/`TEST_RUN` (see Task 7's "One test, not a grid of
+  toggles"); there is no print-instead-of-send mode in the current
+  code.
 - `get_secrets()` returning a frozen dataclass with `resend_api_key`,
   `email_to`, `email_from` (from `RESEND_API_KEY`, `ALERT_EMAIL_TO`,
   `ALERT_EMAIL_FROM` defaulting to `"Train Alerts <onboarding@resend.dev>"`).
@@ -795,13 +798,14 @@ Two implementation notes beyond the spec below:
   dates have genuinely-confirmed matches, per CLAUDE.md's "a wrong price
   is worse than a missed alert."
 
-Confirmed against a real (if network-less) run in this environment:
-`DRY_RUN=1 MAX_DATES=1 python -m src.main` correctly drove the whole
-pipeline down to a per-date scraper failure (no Chromium binary
-installed in this sandbox) being caught, logged, and surfaced as exit
-code 1 with "all 1 candidate date(s) failed" — the intended failure
-path, not a crash. All 128 tests pass (`python -m pytest -q`), no
-`float` in `src/main.py` or `src/booked_dates.py`.
+Confirmed against a real (if network-less) run in this environment (at
+the time, via the now-removed `DRY_RUN=1`; the equivalent today is
+`SKIP_TIME_GATE=1 TEST_RUN=1`, see Task 7): the invocation correctly
+drove the whole pipeline down to a per-date scraper failure (no
+Chromium binary installed in this sandbox) being caught, logged, and
+surfaced as exit code 1 with "all 1 candidate date(s) failed" — the
+intended failure path, not a crash. All 128 tests pass (`python -m
+pytest -q`), no `float` in `src/main.py` or `src/booked_dates.py`.
 
 **What the code does**
 
@@ -834,8 +838,10 @@ the user sees the format immediately):
    If `config.MAX_DATES` is set (debug/manual runs only), truncate
    `candidates` to the first `MAX_DATES` entries.
 3. If `candidates` is empty → log `"No checkable travel dates remaining this school year — nothing to do."` (or, if `all_candidates` was non-empty but all booked, `"All remaining dates are already booked — nothing to do."`), return `0`. **No browser launch, no email.**
-4. Load secrets *before* scraping, so a misconfiguration fails fast (skip
-   in `DRY_RUN`).
+4. Load secrets *before* scraping, so a misconfiguration fails fast.
+   (Originally specced to skip this in `DRY_RUN` — removed in Task 7's
+   revision, see there; secrets are always required now, since every
+   run always sends a real email.)
 5. For each candidate date, in ascending order, with a 5–15s randomised
    pause between dates:
    - `raw = scraper.fetch_journey_search(date, artifacts_dir=...)`
@@ -882,7 +888,10 @@ monkeypatching `datetime`)
   scrapes.
 - A sub-threshold price with `railcard_applied=False` → returns 1 and
   `send_alert` **not** called.
-- `DRY_RUN=1` → no secrets required, `send_alert` receives `dry_run=True`.
+- ~~`DRY_RUN=1` → no secrets required, `send_alert` receives
+  `dry_run=True`~~ — removed in Task 7's revision; see
+  `TEST_RUN`/`SKIP_TIME_GATE` there instead, both of which still
+  require real secrets since they always send a genuine email.
 - Notifier raises → returns 1.
 - `booked-dates.txt` lists tomorrow's date → that date is excluded from
   `candidates` and the scraper is never called for it.
@@ -946,29 +955,47 @@ a timezone-aware schedule directly, so the implemented design instead:
 - `main(today=None, now=None)` — `now` was added as its own parameter
   (distinct from `today`) specifically so tests can freeze the gate's
   clock independently of the date-computation clock.
-- A manual `workflow_dispatch` run sets `SKIP_TIME_GATE=1` by default
-  (via its own `skip_time_gate` input, default `true`) so testing isn't
-  itself gated on happening to click "Run workflow" at 8pm. The
-  scheduled cron triggers never set this — env computed as
-  `github.event_name == 'workflow_dispatch' && inputs.skip_time_gate`.
+- A manual `workflow_dispatch` run sets `config.SKIP_TIME_GATE` so
+  testing isn't itself gated on happening to click "Run workflow" at
+  8pm — see the next section for why this isn't a user-facing toggle.
 
 This is the same principle §1.3/§2.2 already established for weekday/
 term gating (`is_checkable_day`) applied to time-of-day: **all timing
 decisions live in Python, never in the cron expression itself.**
 
-#### A real test-email path
+#### One test, not a grid of toggles
 
-`workflow_dispatch`'s `dry_run` input (as originally specced) only
-prints an email when a real run happens to find a fare under threshold
-— which might not happen for a long time, making it a poor way to
-verify Resend delivery specifically. Added `config.SEND_TEST_EMAIL`
-(env `SEND_TEST_EMAIL`) and `src/main.py`'s `_send_test_email()`: skips
-scraping and `evaluate()` entirely and sends one synthetic `AlertMatch`
-(a fixed £7.77 fare, tomorrow, clearly labelled in its `fare_name`)
-through the real `notifier.send_alert(..., dry_run=False)` — always a
-genuine send, even if `DRY_RUN` also happens to be set, since
-confirming actual delivery is the whole point. Exposed as the
-`send_test_email` workflow_dispatch input.
+The first working version of this exposed three independent
+`workflow_dispatch` checkboxes (`dry_run`, `send_test_email`,
+`skip_time_gate`) — the user's explicit follow-up feedback was that
+they wanted **one type of test**, that does the complete real thing
+(scrape, write to `price-history.csv`, send an email), not a
+combination of toggles to reason about. Revised to:
+
+- `workflow_dispatch` has exactly one input, `max_dates` (default `1`,
+  so a manual run is fast; blank checks everything). No boolean
+  toggles at all.
+- `config.SKIP_TIME_GATE` and `config.TEST_RUN` are both set purely
+  from `github.event_name == 'workflow_dispatch'` in the workflow's
+  `env:` block — not from separate inputs. Kept as two internal flags
+  (not one) only because they answer genuinely different questions and
+  a single test (in `tests/test_main.py`) exercising the RUN_HOUR_LONDON
+  gate shouldn't also have to reason about the email-fallback behaviour,
+  and vice versa.
+- `DRY_RUN` and the synthetic-fare `SEND_TEST_EMAIL` path (a fixed
+  £7.77 fake fare, no scraping) were both **removed entirely** —
+  `src/main.py` no longer has any print-instead-of-send mode, and a
+  test run's data is always real, never fabricated.
+- `src/main.py`'s `_best_effort_matches_for_test()`: when `TEST_RUN` is
+  set and `evaluate()` found nothing genuinely below threshold, picks
+  the single cheapest real, railcard-confirmed fare found across the
+  whole run and sends *that* through the normal `notifier.send_alert`
+  path — a real email using real data, confirming scraping + the CSV
+  log + Resend delivery together, without fabricating a price. Returns
+  no email (not a fabricated one) if literally nothing priced was found
+  at all (e.g. everything sold out) — even a test run never invents
+  data. `TEST_RUN` never overrides the `railcard_unconfirmed` safety
+  check — that invariant holds unconditionally.
 
 #### Workflow permissions
 
@@ -987,13 +1014,13 @@ shouldn't share that workflow's concurrency group or run history.
 tool does, marking a date as booked, updating term dates, required
 secrets, Resend setup, local run instructions, operational caveats,
 how failures surface) plus the two Task 8 additions below and the
-`send_test_email`/`skip_time_gate`/`max_dates` manual-run inputs.
+single `max_dates` manual-run input.
 
 **Acceptance criteria**
 - `.github/workflows/price-check.yml`, `test.yml`, and (Task 8's)
   `deploy-pages.yml` all parse as valid YAML. **Done.**
 - No secret value appears in any workflow log. **Done** — see
-  `src/notifier.py`'s redaction and the fact that `SEND_TEST_EMAIL`'s
+  `src/notifier.py`'s redaction, unconditional of `TEST_RUN`'s
   synthetic fare never touches a real secret path.
 - The test workflow passes on a clean checkout (all 150+ tests).
   **Done.**
@@ -1086,6 +1113,45 @@ is needed.
   hardcoded to `rosjo99`/`Train-prices`/`main` — this only actually
   controls the same `booked-dates.txt` the scheduled job reads once
   this branch is merged to `main`.
+- **Revised per explicit user follow-up request** to also show the
+  last recorded price for each date: the repo is public (a separate
+  user decision, made when GitHub Pages turned out to require a paid
+  plan for a private repo — see this project's chat history), so
+  `booked-dates.txt` **and** `price-history.csv` are both now read via
+  GitHub's unauthenticated raw-content host
+  (`raw.githubusercontent.com`), not the authenticated Contents API —
+  no token needed just to *view* the table, only to *save* a change
+  (`toggleDate` still re-fetches via the authenticated API with a fresh
+  `sha` immediately before writing). `site/app.js` gained a minimal CSV
+  parser (`parseCsv`/`parseCsvLine`, quote-aware since `fare_name`
+  could in principle contain a comma) and
+  `latestPriceByDateAndTarget()`, which keeps only the most-recently-
+  checked row per (travel_date, target_departure) — verified against a
+  real `price_log.append_price_log()`-written sample, including that a
+  train disappearing from the latest check correctly overrides an
+  older price rather than leaving it stale. `export_terms.py` now also
+  exports `config.TARGET_DEPARTURES` so the site's price columns are
+  labelled without hand-duplicating the route's departure times.
+  Checkboxes are disabled (with an explanatory `title` tooltip) until a
+  token is present, rather than the table being hidden entirely.
+- **A related question the same follow-up raised — is the site now
+  editable by anyone, since the repo is public?** No: GitHub repo
+  visibility only ever controls *read* access; *write* access (a `PUT`
+  through the Contents API succeeding at all) is independently gated by
+  GitHub's own collaborator permissions on the repo, checked at request
+  time regardless of the token used or how public the repo is. A
+  visitor's token only ever carries the write access their own GitHub
+  account already has — there is no scenario where making the repo
+  public grants a stranger's token new permissions. Confirmed live via
+  `list_repository_collaborators`: as of this revision the repo has
+  exactly one collaborator (the owner), so literally no one else,
+  including the intended second user (the "girlfriend" in the original
+  request), can write until explicitly added as a collaborator — which
+  is also the entire mechanism for granting her access, without any
+  separate login system needing to be built. A custom login layered on
+  a backend-less static site could not exceed this: any shared secret
+  baked into client-side JS is visible to anyone who opens dev tools,
+  strictly weaker than relying on GitHub's own auth.
 
 **Acceptance criteria**
 - `append_price_log` never truncates existing rows; writes a header

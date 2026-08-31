@@ -15,7 +15,10 @@ checking it — no coding involved, no need to touch this repo directly.
 **Easiest way — the booked-dates website:** open
 `https://rosjo99.github.io/Train-prices/` (once GitHub Pages is enabled
 — see [Setting up the booked-dates website](#setting-up-the-booked-dates-website)
-below) and tick the checkbox next to any date you've booked. It saves
+below). The table (including the last price recorded for each date,
+once the first successful run has happened) is visible to anyone with
+the link straight away — no setup needed just to look. Ticking a
+checkbox needs the one-time token setup described below; it saves
 immediately. This is the page meant to be shared with anyone who
 doesn't use GitHub day to day.
 
@@ -69,6 +72,16 @@ ticked. It doesn't need to be shared with anyone else, and it only ever
 grants write access to this one repository's contents, nothing else on
 the account.
 
+**Making the repo public doesn't mean anyone can edit it.** Repo
+visibility only ever controls who can *read* it. Whether a save
+actually succeeds is separately gated by whether the token's owner is
+an invited **collaborator** with write access (Settings →
+Collaborators) — a stranger's token gets rejected by GitHub regardless
+of the repo being public. So the collaborator list *is* the access
+control for this site; add someone there (and have them generate their
+own token per the steps above) to let them edit, and remove them there
+to revoke it.
+
 If the token ever expires or is revoked, the site will show a clear
 "token was rejected" message — just generate a new one and paste it in
 again.
@@ -89,20 +102,28 @@ No secret is ever logged or can appear in an email/exception body — see
 
 ## Running a test
 
-From the **Actions** tab → **Train price check** → **Run workflow**, you
-can:
+There's exactly one way to test this, deliberately — no checkboxes to
+pick a combination from. From the **Actions** tab → **Train price
+check** → **Run workflow**, then **Run workflow** again to confirm.
 
-- Tick **`send_test_email`** to skip scraping entirely and send one real
-  (not simulated) test email through Resend — the fastest way to confirm
-  `RESEND_API_KEY`/`ALERT_EMAIL_TO` are set up correctly, since a normal
-  run might go a long time without a fare actually dropping below £10.
-- Tick **`dry_run`** instead to run the real scrape-and-decide pipeline
-  but print the email to the log rather than sending it.
-- Set **`max_dates`** to a small number (e.g. `1`) to limit how many
-  travel dates a manual run checks, for a quicker test.
-- **`skip_time_gate`** defaults to on for manual runs, so they always
-  execute immediately regardless of what time it is — see below for why
-  that gate exists at all.
+A manual run always does the complete real thing: it scrapes a real
+date, writes the result to `price-history.csv`, and sends a genuine
+email through Resend — using real, current fare data throughout. If
+that date's fare happens to be below £10, it's a normal alert; if not
+(the common case), it sends the cheapest real fare it found instead, so
+you still get a real email confirming the whole pipeline — scraping,
+the CSV log, and Resend delivery — works end to end. It also never
+waits for 8pm London; a manual run always executes immediately.
+
+By default a manual run only checks **one** date (`max_dates: 1`
+in the "Run workflow" dialog), so it normally finishes in well under a
+minute. Clear that field (or set a bigger number) to test against more
+dates at once.
+
+The scheduled run at 8pm every day behaves differently in exactly the
+two ways described above: it waits for the real 8pm London time slot,
+and it only ever emails when a fare has genuinely dropped below £10 —
+see the next section.
 
 ## How the daily schedule works
 
@@ -165,11 +186,16 @@ deployed (any push to `main` touching `src/term_dates.py` redeploys it
 ```
 pip install -r requirements.txt
 playwright install chromium
-DRY_RUN=1 SKIP_TIME_GATE=1 python -m src.main
+RESEND_API_KEY=... ALERT_EMAIL_TO=... MAX_DATES=1 SKIP_TIME_GATE=1 TEST_RUN=1 python -m src.main
 ```
 
-`DRY_RUN=1` prints the email instead of sending it (no secrets needed).
 `SKIP_TIME_GATE=1` runs immediately instead of only at 8pm London time.
+`TEST_RUN=1` sends a genuine email even if nothing found is below
+threshold (using the cheapest real fare it did find) — see "Running a
+test" above for what this does and why; it's the same thing a manual
+GitHub Actions run does automatically, just triggered from a local
+shell instead. There is no simulated/dry-run mode — this always sends a
+real email, so real secrets are required.
 
 ## How failures are surfaced
 

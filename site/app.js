@@ -10,9 +10,16 @@ const OWNER = "rosjo99";
 const REPO = "Train-prices";
 const BRANCH = "main";
 const BOOKED_DATES_PATH = "booked-dates.txt";
+const PRICE_HISTORY_PATH = "price-history.csv";
 const TOKEN_STORAGE_KEY = "nre_booked_dates_pat";
 
 const API_BASE = "https://api.github.com";
+// The repo is public, so both of these can be read with no token at
+// all via GitHub's raw content host — used for read-only display
+// (the price history, and the booked-dates table before a token is
+// added). Writing booked-dates.txt still goes through the authenticated
+// Contents API below, which is the only path that needs a token.
+const RAW_BASE = `https://raw.githubusercontent.com/${OWNER}/${REPO}/${BRANCH}`;
 
 // ---------------------------------------------------------------------------
 // Term-date logic — a JS port of src/term_dates.py's is_checkable_day()/
@@ -113,6 +120,80 @@ function renderBookedContent(headerLines, datesSet) {
 }
 
 // ---------------------------------------------------------------------------
+// price-history.csv parsing — mirrors src/price_log.py's columns
+// (checked_at, travel_date, target_departure, actual_departure,
+// arrival_time, price_gbp, railcard_applied, sold_out, fare_name). Only
+// a minimal CSV parser is needed: every field this project ever writes
+// is comma/quote-free except possibly fare_name, so quoted fields are
+// still handled for robustness in case that ever changes.
+// ---------------------------------------------------------------------------
+
+function parseCsvLine(line) {
+  const fields = [];
+  let current = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (inQuotes) {
+      if (ch === '"' && line[i + 1] === '"') {
+        current += '"';
+        i++;
+      } else if (ch === '"') {
+        inQuotes = false;
+      } else {
+        current += ch;
+      }
+    } else if (ch === '"') {
+      inQuotes = true;
+    } else if (ch === ",") {
+      fields.push(current);
+      current = "";
+    } else {
+      current += ch;
+    }
+  }
+  fields.push(current);
+  return fields;
+}
+
+function parseCsv(text) {
+  const lines = text.split(/\r?\n/).filter((l) => l.length > 0);
+  if (lines.length === 0) return [];
+  const header = parseCsvLine(lines[0]);
+  return lines.slice(1).map((line) => {
+    const values = parseCsvLine(line);
+    const row = {};
+    header.forEach((key, i) => {
+      row[key] = values[i] ?? "";
+    });
+    return row;
+  });
+}
+
+// Returns latest[travel_date][target_departure] = row, keeping only the
+// most-recently-checked (max checked_at) row for each pair — the CSV is
+// append-only, so a date checked on many different days has many rows.
+function latestPriceByDateAndTarget(rows) {
+  const latest = {};
+  for (const row of rows) {
+    const byDate = (latest[row.travel_date] ??= {});
+    const existing = byDate[row.target_departure];
+    if (!existing || row.checked_at > existing.checked_at) {
+      byDate[row.target_departure] = row;
+    }
+  }
+  return latest;
+}
+
+function formatLatestCell(row) {
+  if (!row) return "–";
+  if (row.sold_out === "True") return "sold out";
+  if (!row.actual_departure) return "not found";
+  if (!row.price_gbp) return "–";
+  return `£${Number(row.price_gbp).toFixed(2)}`;
+}
+
+// ---------------------------------------------------------------------------
 // GitHub Contents API — every call goes straight from this browser to
 // api.github.com using the token pasted into the setup box, stored only
 // in this browser's localStorage. Nothing here talks to any other
@@ -140,6 +221,15 @@ async function githubGetFile(token) {
   }
   const data = await res.json();
   return { content: base64ToUtf8(data.content), sha: data.sha };
+}
+
+async function fetchRawFile(path) {
+  const res = await fetch(`${RAW_BASE}/${path}`, { cache: "no-store" });
+  if (res.status === 404) return null; // e.g. price-history.csv before the first successful run ever commits it
+  if (!res.ok) {
+    throw new Error(`Could not read ${path} (HTTP ${res.status})`);
+  }
+  return res.text();
 }
 
 async function githubPutFile(token, content, sha, message) {
@@ -207,6 +297,7 @@ document.getElementById("token-clear").addEventListener("click", () => {
   clearToken();
   refreshTokenUI();
   showStatus("Token removed from this browser.", "ok");
+  loadAndRender();
 });
 
 async function toggleDate(iso, checkboxEl) {
@@ -248,7 +339,7 @@ async function toggleDate(iso, checkboxEl) {
   }
 }
 
-function renderTable(dates, bookedSet, termsData) {
+function renderTable(dates, bookedSet, termsData, latestByDate, hasToken) {
   containerEl.innerHTML = "";
 
   if (dates.length === 0) {
@@ -256,6 +347,7 @@ function renderTable(dates, bookedSet, termsData) {
     return;
   }
 
+  const targetDepartures = termsData.target_departures || [];
   let currentTermName = null;
   let tbody = null;
 
@@ -270,7 +362,8 @@ function renderTable(dates, bookedSet, termsData) {
       heading.textContent = termName;
       section.appendChild(heading);
       const table = document.createElement("table");
-      table.innerHTML = "<thead><tr><th>Date</th><th>Day</th><th>Booked?</th></tr></thead>";
+      const priceHeaders = targetDepartures.map((t) => `<th>${t}</th>`).join("");
+      table.innerHTML = `<thead><tr><th>Date</th><th>Day</th>${priceHeaders}<th>Booked?</th></tr></thead>`;
       tbody = document.createElement("tbody");
       table.appendChild(tbody);
       section.appendChild(table);
@@ -282,41 +375,59 @@ function renderTable(dates, bookedSet, termsData) {
     dateCell.textContent = iso;
     const dayCell = document.createElement("td");
     dayCell.textContent = weekdayName(iso);
+    row.appendChild(dateCell);
+    row.appendChild(dayCell);
+
+    const byTarget = latestByDate[iso] || {};
+    for (const target of targetDepartures) {
+      const priceCell = document.createElement("td");
+      priceCell.textContent = formatLatestCell(byTarget[target]);
+      row.appendChild(priceCell);
+    }
+
     const checkboxCell = document.createElement("td");
     const checkbox = document.createElement("input");
     checkbox.type = "checkbox";
     checkbox.checked = bookedSet.has(iso);
+    checkbox.disabled = !hasToken;
+    checkbox.title = hasToken ? "" : "Add your token above to edit";
     checkbox.setAttribute("aria-label", `Mark ${iso} as booked`);
     checkbox.addEventListener("change", () => toggleDate(iso, checkbox));
     checkboxCell.appendChild(checkbox);
-
-    row.appendChild(dateCell);
-    row.appendChild(dayCell);
     row.appendChild(checkboxCell);
+
     tbody.appendChild(row);
   }
 }
 
 async function loadAndRender() {
+  // The repo is public, so the date list, current booked state, and
+  // price history are all readable with no token at all — a token is
+  // only ever needed to actually save a change (see toggleDate). This
+  // means the table (including prices) shows up immediately for anyone
+  // with the link, with editing simply disabled until a token is added.
   const token = getToken();
-  if (!token) {
-    containerEl.innerHTML = "";
-    return;
-  }
 
   try {
     showStatus("Loading…");
-    const [termsResponse, fileResult] = await Promise.all([
+    const [termsResponse, bookedContent, priceHistoryText] = await Promise.all([
       fetch("terms.json").then((r) => r.json()),
-      githubGetFile(token),
+      fetchRawFile(BOOKED_DATES_PATH),
+      fetchRawFile(PRICE_HISTORY_PATH),
     ]);
 
-    const { dates: bookedSet } = parseBookedContent(fileResult.content);
+    const { dates: bookedSet } = parseBookedContent(bookedContent || "");
+    const latestByDate = priceHistoryText
+      ? latestPriceByDateAndTarget(parseCsv(priceHistoryText))
+      : {};
     const start = addDaysISO(todayLocalISO(), 1);
     const dates = checkableDates(start, termsResponse.last_known_date, termsResponse);
 
-    renderTable(dates, bookedSet, termsResponse);
-    showStatus("");
+    renderTable(dates, bookedSet, termsResponse, latestByDate, !!token);
+    showStatus(
+      priceHistoryText ? "" : "No prices recorded yet — they'll appear here after the first successful run.",
+      priceHistoryText ? "" : "ok"
+    );
 
     const generatedAtEl = document.getElementById("generated-at");
     if (generatedAtEl && termsResponse.generated_at) {
@@ -324,11 +435,7 @@ async function loadAndRender() {
     }
   } catch (err) {
     console.error(err);
-    if (String(err).includes("401") || String(err).includes("403")) {
-      showStatus("Your token was rejected — it may have expired. See the setup instructions to create a new one.", "error");
-    } else {
-      showStatus(`Could not load dates: ${err.message || err}`, "error");
-    }
+    showStatus(`Could not load dates: ${err.message || err}`, "error");
   }
 }
 

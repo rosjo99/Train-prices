@@ -23,7 +23,7 @@ import sys
 from datetime import date
 from pathlib import Path
 
-from src import term_dates
+from src import config, term_dates
 
 
 def _term_to_dict(term: term_dates.Term) -> dict:
@@ -43,6 +43,9 @@ def build_export() -> dict:
         "terms": [_term_to_dict(term) for term in term_dates.TERMS],
         "check_weekdays": sorted(term_dates.CHECK_WEEKDAYS),
         "last_known_date": term_dates.LAST_KNOWN_DATE.isoformat(),
+        # So the site can label its per-date price columns without
+        # hand-duplicating the route's target departure times.
+        "target_departures": list(config.TARGET_DEPARTURES),
         # Informational only (shown in the site's footer) — not used in
         # any checkable-date decision, so date.today() here isn't the
         # naive-clock-read the rest of this project avoids.

@@ -165,20 +165,26 @@ def _read_bool_env(name: str) -> bool:
 # the scheduled cron run.
 MAX_DATES: int | None = _read_max_dates()
 
-DRY_RUN: bool = _read_bool_env("DRY_RUN")
-
-# Set by workflow_dispatch's manual "run now" path so a test run isn't
-# silently no-op'd by RUN_HOUR_LONDON just because it wasn't triggered at
-# 8pm. Never set by the scheduled cron run — that's the whole point of
-# the two-cron-lines-plus-gate design.
+# Both of these are set automatically by price-check.yml purely from
+# `github.event_name == 'workflow_dispatch'` — there's no separate user
+# toggle for either, deliberately, per explicit request for one single
+# "run it manually" test rather than a grid of dry_run/skip-the-gate/
+# send-a-fake-email checkboxes to pick a combination from. They stay two
+# separate internal flags (not one) only because they answer genuinely
+# different questions and collapsing them would make ordinary tests of
+# one behaviour accidentally exercise the other.
+#
+# SKIP_TIME_GATE bypasses RUN_HOUR_LONDON, so a manual run never has to
+# wait for real 8pm London to do something.
 SKIP_TIME_GATE: bool = _read_bool_env("SKIP_TIME_GATE")
 
-# Set by workflow_dispatch's "send a test email" input. Sends one
-# synthetic alert through the real notifier (bypassing scraping
-# entirely) to positively confirm email delivery works, since a real run
-# might go for a long time without ever finding a fare under threshold
-# to naturally trigger one.
-SEND_TEST_EMAIL: bool = _read_bool_env("SEND_TEST_EMAIL")
+# TEST_RUN makes main() always send a genuine email through the real
+# notifier using REAL scraped data — if nothing is actually below
+# threshold, it reports the cheapest real fare found instead of staying
+# silent, so a manual run always exercises scraping, the CSV log, and
+# Resend delivery end to end. See src/main.py's
+# `_best_effort_matches_for_test`.
+TEST_RUN: bool = _read_bool_env("TEST_RUN")
 
 
 @dataclass(frozen=True)

@@ -3,6 +3,13 @@ name: Train price check
 # Runs the real daily price check. See docs/plans/001-train-price-alert.md
 # Task 7 for the design this implements, in particular "Running at a
 # fixed local time" for why there are two cron lines below.
+#
+# There is exactly one way to test this manually: click "Run workflow".
+# That's it — no checkboxes to configure. A workflow_dispatch run always
+# does the complete real thing (scrape, write to price-history.csv, send
+# a real email through Resend), never a fixed local time to wait for,
+# never a synthetic/dry-run substitute for any of it — see SKIP_TIME_GATE
+# and TEST_RUN below, both driven purely by github.event_name.
 
 on:
   schedule:
@@ -17,21 +24,9 @@ on:
     - cron: "0 20 * * *" # 20:00 GMT (late Oct - late Mar)
   workflow_dispatch:
     inputs:
-      dry_run:
-        description: "Print the email instead of sending it"
-        type: boolean
-        default: false
       max_dates:
-        description: "Cap the number of dates checked (debug only, leave blank for no cap)"
-        default: ""
-      send_test_email:
-        description: "Skip scraping entirely and send one real test email, to confirm delivery works"
-        type: boolean
-        default: false
-      skip_time_gate:
-        description: "Run now regardless of the 8pm London check (always on for manual runs unless unchecked)"
-        type: boolean
-        default: true
+        description: "Cap the number of dates checked, for a quicker test (leave blank to check everything)"
+        default: "1"
 
 concurrency:
   group: train-price-check
@@ -47,8 +42,8 @@ jobs:
     # passes the time gate (see plan §2.2) — up to ~100 dates early in a
     # term at an estimated 15-25s/date. 90 minutes gives headroom over
     # the ~30-45 min estimate; tighten this once real run durations are
-    # observed. A run that no-ops on the time gate, or that only sends a
-    # test email, finishes in well under a minute regardless.
+    # observed. A manual run defaults max_dates to 1, so it normally
+    # finishes in well under a minute.
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -66,14 +61,14 @@ jobs:
           ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
           ALERT_EMAIL_FROM: ${{ secrets.ALERT_EMAIL_FROM }}
           MAX_DATES: ${{ inputs.max_dates || '' }}
-          DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
-          SEND_TEST_EMAIL: ${{ inputs.send_test_email && '1' || '' }}
-          # Scheduled (cron) runs must never skip the gate — that's the
-          # whole point of the dual-cron-line design above. Only a
-          # manual workflow_dispatch run can set this, and only because
-          # its own input defaults to true (a manual run is for testing
-          # right now, not for waiting until 8pm).
-          SKIP_TIME_GATE: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_time_gate && '1' || '' }}
+          # Both driven purely by trigger type, with no separate user
+          # choice: a manual run always runs right now (never waiting for
+          # 8pm London) and always sends a genuine email using real
+          # scraped data (never staying silent just because nothing was
+          # under threshold) — see src/main.py's `TEST_RUN` handling.
+          # Scheduled (cron) runs never set either.
+          SKIP_TIME_GATE: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
+          TEST_RUN: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
         run: python -m src.main
       - name: Commit updated price history
         if: always()

@@ -1,9 +1,10 @@
 """Orchestrates a full daily price-check run: enumerate candidate travel
 dates, scrape and parse each one, decide whether any fare beats the
-alert threshold, and send (or dry-run print) an email if so.
+alert threshold, and send a real email if so (or, in TEST_RUN, always
+send something real so a manual run exercises the full pipeline).
 
 See docs/plans/001-train-price-alert.md Task 6 for the full spec this
-implements.
+implements, and Task 7 for TEST_RUN and the RUN_HOUR_LONDON time gate.
 """
 
 from __future__ import annotations
@@ -13,7 +14,6 @@ import random
 import sys
 import time
 from datetime import date, datetime, timedelta, timezone
-from decimal import Decimal
 from pathlib import Path
 
 from src import booked_dates, config, notifier, parser, price_log, scraper, term_dates
@@ -44,27 +44,6 @@ def _ensure_logging_configured() -> None:
         logging.basicConfig(
             level=logging.INFO,
             format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-        )
-
-
-def _load_secrets_for_run() -> config.Secrets:
-    """Load real secrets — except in DRY_RUN, where a missing/incomplete
-    environment must not stop the run (the whole point of dry-run is to
-    exercise the pipeline without needing them). If real secrets happen
-    to be set anyway, they're used (so DRY_RUN's printed email reflects
-    the real recipient); otherwise a clearly-labelled placeholder stands
-    in, since notifier.send_alert's dry-run path still reads
-    secrets.email_to/email_from to print them.
-    """
-    if not config.DRY_RUN:
-        return config.get_secrets()
-    try:
-        return config.get_secrets()
-    except config.ConfigError:
-        return config.Secrets(
-            resend_api_key="(dry-run: RESEND_API_KEY not set)",
-            email_to="(dry-run: ALERT_EMAIL_TO not set)",
-            email_from="Train Alerts <onboarding@resend.dev>",
         )
 
 
@@ -118,34 +97,27 @@ def evaluate(
     return matches, railcard_unconfirmed
 
 
-def _send_test_email() -> int:
-    """SEND_TEST_EMAIL path: send one synthetic alert through the real
-    notifier, no scraping at all, to positively confirm email delivery
-    works. Always a real send (never dry-run) regardless of config.DRY_RUN
-    — the whole point is confirming Resend actually delivers.
+def _best_effort_matches_for_test(
+    targets_by_date: dict[date, dict[str, TrainOption | None]],
+) -> list[AlertMatch]:
+    """TEST_RUN fallback for when nothing found is genuinely below
+    threshold: pick the single cheapest real, railcard-confirmed fare
+    across the whole run (regardless of the threshold) so a manual test
+    run still sends one genuine email end to end — using only real
+    scraped data, never a fabricated price. Returns [] if literally no
+    priced, railcard-confirmed fare was found at all (e.g. every target
+    sold out) — there's then nothing real to report.
     """
-    logger.info("SEND_TEST_EMAIL set — sending a single synthetic test alert, no scraping")
-    secrets = config.get_secrets()
-    travel_date = datetime.now(config.LONDON).date() + timedelta(days=1)
-    test_option = TrainOption(
-        travel_date=travel_date,
-        departure_time="07:25",
-        arrival_time="08:26",
-        price=Decimal("7.77"),
-        currency="GBP",
-        railcard_applied=True,
-        is_direct=True,
-        sold_out=False,
-        fare_name="TEST EMAIL — not a real fare, please ignore",
-    )
-    match = AlertMatch(travel_date=travel_date, option=test_option, threshold=config.PRICE_THRESHOLD)
-    try:
-        notifier.send_alert([match], secrets, dry_run=False)
-    except notifier.NotifierError as exc:
-        logger.error("test email failed to send: %s", exc)
-        return 1
-    logger.info("test email sent to %s — check the inbox", secrets.email_to)
-    return 0
+    best: AlertMatch | None = None
+    for travel_date, targets in targets_by_date.items():
+        for option in targets.values():
+            if option is None or option.price is None or not option.railcard_applied:
+                continue
+            if best is None or option.price < best.option.price:
+                best = AlertMatch(
+                    travel_date=travel_date, option=option, threshold=config.PRICE_THRESHOLD
+                )
+    return [best] if best is not None else []
 
 
 def _log_target_summary(travel_date: date, targets: dict[str, TrainOption | None]) -> None:
@@ -170,9 +142,6 @@ def main(today: date | None = None, now: datetime | None = None) -> int:
         now = datetime.now(config.LONDON)
     if today is None:
         today = now.date()
-
-    if config.SEND_TEST_EMAIL:
-        return _send_test_email()
 
     if not config.SKIP_TIME_GATE and now.astimezone(config.LONDON).hour != config.RUN_HOUR_LONDON:
         logger.info(
@@ -207,7 +176,7 @@ def main(today: date | None = None, now: datetime | None = None) -> int:
             logger.info("No checkable travel dates remaining this school year — nothing to do.")
         return 0
 
-    secrets = _load_secrets_for_run()
+    secrets = config.get_secrets()
 
     results: dict[date, dict[str, TrainOption | None]] = {}
     failures: list[tuple[date, str]] = []
@@ -269,17 +238,31 @@ def main(today: date | None = None, now: datetime | None = None) -> int:
         )
         return 1
 
+    is_test_summary = False
+    if not matches and config.TEST_RUN:
+        matches = _best_effort_matches_for_test(results)
+        is_test_summary = bool(matches)
+        if is_test_summary:
+            logger.info(
+                "TEST_RUN: nothing below threshold, sending the cheapest real fare "
+                "found instead (£%s) so this test exercises Resend delivery too",
+                matches[0].option.price,
+            )
+
     if not matches:
         logger.info("no fares below threshold — nothing to alert on")
         return 0
 
     try:
-        notifier.send_alert(matches, secrets, dry_run=config.DRY_RUN)
+        notifier.send_alert(matches, secrets, dry_run=False)
     except notifier.NotifierError as exc:
         logger.error("failed to send alert email: %s", exc)
         return 1
 
-    logger.info("sent alert for %d match(es)", len(matches))
+    if is_test_summary:
+        logger.info("sent test summary email (real scraped data, not a genuine alert)")
+    else:
+        logger.info("sent alert for %d match(es)", len(matches))
     return 0
 
 

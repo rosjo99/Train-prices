@@ -116,11 +116,6 @@ def _no_max_dates(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _dry_run_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(main.config, "DRY_RUN", False)
-
-
-@pytest.fixture(autouse=True)
 def _skip_time_gate_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
     # Every existing test here is exercising something other than the
     # RUN_HOUR_LONDON gate — bypass it by default so tests aren't flaky
@@ -130,8 +125,11 @@ def _skip_time_gate_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
-def _send_test_email_off(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(main.config, "SEND_TEST_EMAIL", False)
+def _test_run_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Most tests are exercising ordinary (non-TEST_RUN) behaviour, where
+    # "no match" must mean "no email" — TEST_RUN's own fallback-email
+    # behaviour gets its own dedicated tests below with this turned on.
+    monkeypatch.setattr(main.config, "TEST_RUN", False)
 
 
 @pytest.fixture(autouse=True)
@@ -329,31 +327,6 @@ def test_sub_threshold_price_without_railcard_confirmation_returns_1_no_email(mo
 
     assert result == 1
     assert send_calls == []
-
-
-# ---------------------------------------------------------------------------
-# DRY_RUN
-# ---------------------------------------------------------------------------
-
-
-def test_dry_run_needs_no_secrets_and_passes_dry_run_true(monkeypatch):
-    def _raise_config_error():
-        raise config.ConfigError("no secrets configured")
-
-    monkeypatch.setattr(main.config, "get_secrets", _raise_config_error)
-    monkeypatch.setattr(main.config, "DRY_RUN", True)
-
-    travel_date = date(2026, 9, 8)
-    raw = _raw(_journey(travel_date, "07:25", "08:26", Decimal("8.70")))
-    _install_fake_scraper(monkeypatch, {travel_date: raw})
-    send_calls = _install_fake_notifier(monkeypatch)
-    monkeypatch.setattr(main.config, "MAX_DATES", 1)
-
-    result = main.main(today=TERM_TIME_DAY)
-
-    assert result == 0
-    assert len(send_calls) == 1
-    assert send_calls[0]["dry_run"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -587,45 +560,112 @@ def test_skip_time_gate_bypasses_wrong_hour(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# SEND_TEST_EMAIL
+# TEST_RUN: a manual run always sends something real, using real
+# scraped data, so it exercises scraping + the CSV log + Resend delivery
+# end to end even when nothing is genuinely below threshold.
 # ---------------------------------------------------------------------------
 
 
-def test_send_test_email_sends_one_synthetic_alert_no_scraping(monkeypatch):
-    monkeypatch.setattr(main.config, "SEND_TEST_EMAIL", True)
-    fetch_calls = _install_fake_scraper(monkeypatch, {})
+def test_test_run_with_genuine_match_behaves_normally(monkeypatch):
+    # A real match still just goes through the normal path — TEST_RUN's
+    # fallback only kicks in when there's nothing to alert on otherwise.
+    monkeypatch.setattr(main.config, "TEST_RUN", True)
+    travel_date = date(2026, 9, 8)
+    raw = _raw(_journey(travel_date, "07:25", "08:26", Decimal("8.70")))
+    _install_fake_scraper(monkeypatch, {travel_date: raw})
     send_calls = _install_fake_notifier(monkeypatch)
+    monkeypatch.setattr(main.config, "MAX_DATES", 1)
 
     result = main.main(today=TERM_TIME_DAY)
 
     assert result == 0
-    assert fetch_calls == []
     assert len(send_calls) == 1
+    assert send_calls[0]["matches"][0].option.price == Decimal("8.70")
     assert send_calls[0]["dry_run"] is False
-    assert len(send_calls[0]["matches"]) == 1
 
 
-def test_send_test_email_ignores_dry_run(monkeypatch):
-    # A test email's whole purpose is confirming real delivery, so it
-    # must always be a real send even if DRY_RUN happens to be set too.
-    monkeypatch.setattr(main.config, "SEND_TEST_EMAIL", True)
-    monkeypatch.setattr(main.config, "DRY_RUN", True)
-    _install_fake_scraper(monkeypatch, {})
+def test_test_run_with_no_match_sends_cheapest_real_fare_found(monkeypatch):
+    monkeypatch.setattr(main.config, "TEST_RUN", True)
+    travel_date = date(2026, 9, 8)
+    # Priced well above the £10 threshold — a real fare, just not a
+    # genuine alert-worthy one.
+    raw = _raw(_journey(travel_date, "07:25", "08:26", Decimal("45.00")))
+    _install_fake_scraper(monkeypatch, {travel_date: raw})
     send_calls = _install_fake_notifier(monkeypatch)
+    monkeypatch.setattr(main.config, "MAX_DATES", 1)
+
+    result = main.main(today=TERM_TIME_DAY)
+
+    assert result == 0
+    assert len(send_calls) == 1
+    assert send_calls[0]["matches"][0].option.price == Decimal("45.00")
+    assert send_calls[0]["dry_run"] is False
+
+
+def test_test_run_picks_the_single_cheapest_across_dates(monkeypatch):
+    monkeypatch.setattr(main.config, "TEST_RUN", True)
+    d1, d2 = date(2026, 9, 8), date(2026, 9, 10)
+    _install_fake_scraper(
+        monkeypatch,
+        {
+            d1: _raw(_journey(d1, "07:25", "08:26", Decimal("45.00"))),
+            d2: _raw(_journey(d2, "07:25", "08:26", Decimal("32.00"))),
+        },
+    )
+    send_calls = _install_fake_notifier(monkeypatch)
+    monkeypatch.setattr(main.config, "MAX_DATES", 2)
 
     main.main(today=TERM_TIME_DAY)
 
-    assert send_calls[0]["dry_run"] is False
+    assert len(send_calls[0]["matches"]) == 1
+    assert send_calls[0]["matches"][0].option.price == Decimal("32.00")
+    assert send_calls[0]["matches"][0].travel_date == d2
 
 
-def test_send_test_email_notifier_failure_returns_1(monkeypatch):
-    monkeypatch.setattr(main.config, "SEND_TEST_EMAIL", True)
-    _install_fake_scraper(monkeypatch, {})
+def test_test_run_with_nothing_priced_at_all_sends_no_email(monkeypatch):
+    # Every target sold out (or absent) everywhere — there's no real
+    # price to report, so TEST_RUN must not fabricate one.
+    monkeypatch.setattr(main.config, "TEST_RUN", True)
+    travel_date = date(2026, 9, 8)
+    raw = _raw(_journey(travel_date, "07:25", "08:26", price=None))
+    _install_fake_scraper(monkeypatch, {travel_date: raw})
+    send_calls = _install_fake_notifier(monkeypatch)
+    monkeypatch.setattr(main.config, "MAX_DATES", 1)
+
+    result = main.main(today=TERM_TIME_DAY)
+
+    assert result == 0
+    assert send_calls == []
+
+
+def test_test_run_notifier_failure_returns_1(monkeypatch):
+    monkeypatch.setattr(main.config, "TEST_RUN", True)
+    travel_date = date(2026, 9, 8)
+    raw = _raw(_journey(travel_date, "07:25", "08:26", Decimal("45.00")))
+    _install_fake_scraper(monkeypatch, {travel_date: raw})
     _install_fake_notifier(monkeypatch, raise_exc=notifier.NotifierError("resend down"))
+    monkeypatch.setattr(main.config, "MAX_DATES", 1)
 
     result = main.main(today=TERM_TIME_DAY)
 
     assert result == 1
+
+
+def test_test_run_does_not_override_railcard_unconfirmed_safety(monkeypatch):
+    # TEST_RUN must never bypass the "never send a wrong price" rule —
+    # it's exactly the kind of thing worth confirming still holds.
+    monkeypatch.setattr(main.config, "TEST_RUN", True)
+    travel_date = date(2026, 9, 8)
+    unconfirmed_option = _option(price=Decimal("45.00"), railcard_applied=False, departure_time="07:25")
+    _install_fake_scraper(monkeypatch, {travel_date: _raw()})
+    monkeypatch.setattr(main.parser, "parse_journeys", lambda raw, d: [unconfirmed_option])
+    send_calls = _install_fake_notifier(monkeypatch)
+    monkeypatch.setattr(main.config, "MAX_DATES", 1)
+
+    result = main.main(today=TERM_TIME_DAY)
+
+    assert result == 1
+    assert send_calls == []
 
 
 # ---------------------------------------------------------------------------
