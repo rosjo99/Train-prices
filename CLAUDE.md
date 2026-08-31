@@ -1,14 +1,16 @@
 # Train Price Alert Tool
 
 ## What this project does
-Checks Trainline daily for the price of two specific Oxford → London
-Paddington trains and emails an alert when either fare falls below
-GBP 10 with a 16-25 railcard applied. Only travel dates that are a
-Tuesday, Thursday or Friday inside school term time are checked.
+Checks National Rail Enquiries daily for the price of two specific
+Oxford → London Paddington trains and emails an alert when either fare
+falls below GBP 10 with a 16-25 railcard applied. Only travel dates
+that are a Tuesday, Thursday or Friday inside school term time are
+checked.
 
 ## Constraints
-- Must handle Trainline's dynamic rendering — confirmed to require a
-  headless browser (see Tech decisions)
+- Must handle NRE's dynamic (client-rendered) journey planner — a
+  headless browser drives it, but via a deep-link URL, not by filling
+  in the form (see Tech decisions)
 - Runs once daily via GitHub Actions cron
 - Email via a free-tier service
 - Prices must reflect 16-25 railcard discount
@@ -22,21 +24,39 @@ Tuesday, Thursday or Friday inside school term time are checked.
   (`playwright`, `requests`, `pytest`). Money is handled with
   `decimal.Decimal`, never `float`; all dates and times go through
   `zoneinfo.ZoneInfo("Europe/London")`, never a naive clock read.
-- **Scraping approach:** Playwright (sync API) driving headless Chromium.
-  Raw HTTP is **not viable**: probed on 2026-08-31, both
+- **Retailer: National Rail Enquiries, not Trainline.** Trainline sits
+  behind DataDome bot protection — probed live on 2026-08-31, both
   `thetrainline.com/api/journey-search/` and `trainline.eu/api/v5_1/search`
-  return HTTP 403 with a DataDome CAPTCHA redirect, and the old
-  `locations-service/v2/search` endpoint now 404s. Trainline sits behind
-  DataDome bot protection, which needs a browser-executed JS challenge.
-  The scraper navigates to a deep-linked `/book/results` URL and reads
-  prices out of the `/api/journey-search/` XHR response the page itself
-  makes (structured JSON, more stable than DOM text), with a DOM scrape
-  as fallback.
-  *Known risk:* DataDome scores IP reputation and GitHub-hosted runners
-  use Azure datacentre ranges. If runs start returning `BlockedError`,
-  the fallback is a self-hosted runner on a home machine (residential
-  IP) — a one-line `runs-on:` change. No proxies, stealth plugins, or
-  CAPTCHA-solving services.
+  returned HTTP 403 with a DataDome CAPTCHA redirect, and this was
+  reconfirmed by two live GitHub Actions runs against a real deep-linked
+  results URL, both blocked immediately — Azure datacentre IP ranges are
+  evidently flagged. National Rail Enquiries (`nationalrail.co.uk`) has
+  **no bot protection at all**: confirmed over 20+ live probe runs from
+  GitHub-hosted runners, zero CAPTCHA/block markers, `is_bot: false`
+  from its own analytics.
+- **Scraping approach:** Playwright (sync API) driving headless
+  Chromium, navigating straight to a fully-parameterised deep-link URL —
+  `https://www.nationalrail.co.uk/journey-planner/?type=single&origin=OXF&destination=PAD&leavingType=departing&leavingDate=DDMMYY&leavingHour=HH&leavingMin=MM&adults=1&railcards=YNG%7C1&extraTime=0`
+  — rather than driving the interactive form. This matters beyond
+  convenience: interactively filling the form and clicking submit
+  reliably triggered a third-party ad redirecting the whole tab to a
+  Booking.com hotel search (root-caused, after many iterations, to
+  searching *today's* date with both target departures already hours in
+  the past — NRE's own "no journeys found" flow apparently offers a
+  hotel search instead). The deep-link approach specifies the correct
+  future date and time up front and, across every probe run, loaded
+  straight into real results with **no redirect at all** and no click
+  needed. The scraper reads prices out of the same-origin XHR the page
+  itself makes to `jpservices.nationalrail.co.uk/journey-planner`
+  (structured JSON, more stable than DOM text — includes a
+  `railcardFares` array per fare with the 16-25 discount distinctly
+  priced), with a DOM scrape as fallback. It still guards against the
+  ad-redirect behaviour (blocking cross-origin iframe documents,
+  backstopping any navigation away from `nationalrail.co.uk`) as cheap
+  defense in depth for an unattended daily job, even though the
+  deep-link approach itself never triggered it.
+  No proxies, stealth plugins, or CAPTCHA-solving services — none of
+  that is needed here since there's no bot protection to evade.
 - **Term-date logic:** a plain Python module, `src/term_dates.py`,
   holding a commented `TERMS` data block (term name, inclusive start/end,
   excluded ranges, excluded single days) plus pure functions
@@ -91,10 +111,11 @@ launch, no email.
 This is checked in full every day by design, so prices are always fresh
 for every remaining date, at the cost of a much larger daily workload:
 early in a term this is over 100 dates checked per run (~30-45 minutes,
-100+ automated requests to Trainline from one IP, once a day). This
-compounds the DataDome IP-reputation risk noted in Tech decisions above
-— see `docs/plans/001-train-price-alert.md` §2.2/§1.4 for the numbers
-and the accepted tradeoff.
+100+ automated requests to National Rail Enquiries from one IP, once a
+day). Unlike the abandoned Trainline approach, NRE has no bot protection
+to trip (see Tech decisions), so this volume is not a known risk — see
+`docs/plans/001-train-price-alert.md` §2.2/§1.4 for the numbers and the
+accepted tradeoff (mainly wall-clock run time, not IP reputation).
 
 ## Marking a date as already booked (no coding involved)
 

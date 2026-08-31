@@ -1,4 +1,5 @@
-"""Dev tool: capture a live Trainline journey-search response as a fixture.
+"""Dev tool: capture a live National Rail Enquiries journey-planner
+response as a fixture.
 
 Usage:
     python scripts/capture_fixture.py --date 2026-09-08 \\
@@ -6,13 +7,11 @@ Usage:
 
 Calls `src.scraper.fetch_journey_search` for the given travel date and
 pretty-prints the raw JSON response to --out. Used both for the initial
-fixture capture and to regenerate it later if Trainline changes its
-response schema.
-
-NOTE: as of this writing, `config.ORIGIN_URN`/`config.DESTINATION_URN` are
-still None (real values require a live discovery run against
-thetrainline.com — see src/config.py's RESULTS_URL_TEMPLATE comment), so
-running this script will fail until a follow-up commit fills them in.
+fixture capture and to regenerate it later if NRE changes its response
+schema. See src/config.py's JOURNEY_PLANNER_URL_TEMPLATE/
+JOURNEY_PLANNER_API_HOST comments for how this was discovered (Trainline
+was abandoned after confirming it's behind DataDome bot protection — see
+CLAUDE.md's Tech decisions).
 """
 
 from __future__ import annotations

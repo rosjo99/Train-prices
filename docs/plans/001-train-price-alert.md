@@ -4,11 +4,20 @@ Status: approved for implementation
 Author: planner
 Date: 2026-08-31
 
-Implements the project described in `CLAUDE.md`: check Trainline for the
-07:25 and 07:30 Oxford → London Paddington departures (one-way, 16-25
-railcard) and email an alert when either fare drops below GBP 10.00, only
-for travel dates that are a Tuesday/Thursday/Friday inside school term
-time.
+Implements the project described in `CLAUDE.md`: check National Rail
+Enquiries for the 07:25 and 07:30 Oxford → London Paddington departures
+(one-way, 16-25 railcard) and email an alert when either fare drops below
+GBP 10.00, only for travel dates that are a Tuesday/Thursday/Friday
+inside school term time.
+
+**Revision note (2026-08-31):** this plan originally targeted Trainline.
+§1.1-1.3 below are that investigation, kept for the record since they're
+why NRE was tried at all. §1.4 documents the actual pivot and what was
+confirmed against the live NRE site before any production code was
+written, per an explicit standing instruction not to proceed until real
+NRE fare data — including the railcard discount — was definitively
+confirmed. Everything from §2 onward describes the current, NRE-based
+design.
 
 ---
 
@@ -37,39 +46,119 @@ client. Raw `requests` scraping is not viable and cannot be made viable by
 adding headers — DataDome fingerprints TLS/JA3, header ordering, and
 requires a browser-executed JS challenge to mint the `datadome` cookie.
 
-### 1.2 What does work
+### 1.2 What looked like it would work, and didn't
 
 `GET https://www.thetrainline.com/book/results?...` returns HTTP 200 with
 the full ~750KB JS application shell. Prices are **not** in that HTML;
 the page fetches them client-side from `/api/journey-search/` *after* the
-DataDome JS challenge has run and set the clearance cookie.
+DataDome JS challenge has run and set the clearance cookie. The plan was
+to drive a real Chromium via Playwright, let the page solve DataDome's
+passive challenge itself, and read the prices out of that XHR response.
 
-So the viable path is: drive a real Chromium via Playwright, let the page
-solve DataDome's passive challenge itself, and read the prices out of the
-`/api/journey-search/` XHR response that the page makes. This gives us
-structured JSON (not fragile DOM text) while still being a genuine
-browser session.
+This did not survive contact with real GitHub Actions runs: **two
+independent live runs, on two different dates, were both blocked
+immediately** by DataDome. Confirms §1.3's risk was not hypothetical.
 
-### 1.3 Principal risk
+### 1.3 Principal risk (as assessed before it materialised)
 
 DataDome scores IP reputation. **GitHub-hosted runners use Azure
-datacentre IP ranges, which are commonly flagged.** A realistic browser
-context plus once-daily, low-volume traffic gives a good chance of
-passing, but this is the single biggest project risk. Mitigations, in
-order:
+datacentre IP ranges, which are commonly flagged.** Mitigations
+considered, in order: a realistic browser context + human-like pacing;
+retry with exponential backoff; detecting the block explicitly and
+failing loudly; and, if persistently blocked, a self-hosted runner on a
+home machine (residential IP) as Plan B.
 
-1. Realistic browser context (see Task 3) + human-like pacing.
-2. Retry with exponential backoff (3 attempts, 30–120s apart).
-3. Detect the block explicitly (CAPTCHA interstitial / 403 on the XHR)
-   and fail the job **loudly** rather than silently reporting "no trains".
-4. **Plan B if persistently blocked:** move to a self-hosted GitHub
-   Actions runner on a home machine (residential IP). This changes only
-   `runs-on:` in the workflow — the Python code is unaffected. This is
-   why the scraper must be a self-contained module with no
-   Actions-specific assumptions.
+Per standing instruction, CAPTCHA-solving services, proxy rotation, or
+other evasion escalation were never attempted. Given the confirmed block
+in §1.2, the response was not to invoke Plan B but to look for a
+different retailer first (§1.4) — a self-hosted runner is a bigger
+operational commitment than switching retailers, and was not yet
+justified.
 
-Do not attempt CAPTCHA-solving services, proxy rotation, or other
-evasion escalation. If Plan B is needed, stop and report.
+### 1.4 The pivot to National Rail Enquiries
+
+Two alternatives were evaluated and rejected before landing on NRE:
+`traintimes.org.uk` has no fares at all (timetable-only) and its page
+content included a prompt-injection attempt, which was identified and
+not acted on; GWR/RailEasy/TrainSplit were found to sit behind their own
+JS-challenge/CAPTCHA products (AWS WAF, hCaptcha/Turnstile) on initial
+inspection.
+
+**National Rail Enquiries (`nationalrail.co.uk`) has no bot protection
+at all** — confirmed over more than 20 live probe runs from GitHub-hosted
+runners (`scripts/probe_nre.py`, `scripts/probe_nre_deeplink.py`; not
+part of the production tool): zero CAPTCHA/DataDome/Cloudflare-challenge
+markers on any run, and one run's own Lucky Orange analytics beacon
+explicitly reported `is_bot: false`.
+
+Getting from "not blocked" to "real fare data, with the railcard discount
+confirmed" took two more rounds of investigation, both driven by
+iterating against the real site rather than assumption:
+
+**Round 1 — interactive UI driving, and why it was abandoned.** The
+first approach filled in NRE's journey-planner form (origin/destination
+autocomplete, date, railcard selects, a "find hotels" checkbox) and
+clicked its submit button, the same shape as the original Trainline
+design. This surfaced a reproducible failure: submitting reliably
+redirected the entire tab to a Booking.com hotel search
+(`booking.com/searchresults.html?...&label=nre_journey_planner`),
+destroying the page before any train results rendered. Multiple
+JS-level mitigations were tried and empirically ruled out — neutralising
+`window.open`, overriding `location.assign`/`.replace`, attempting to
+override the `location.href` setter (browsers make this
+non-configurable by design) — none stopped it, and a route-level network
+backstop only replaced the destination's *content*, it didn't prevent
+the tab navigating away from NRE. The eventual root cause, found by
+inspecting screenshots rather than guessing: the interactive flow was
+searching **today's date**, with both target departures (07:25/07:30)
+already hours in the past by the time the scheduled job would run — NRE's
+own "no valid journeys" handling for that case appears to substitute a
+hotel search, independent of the "find hotels" checkbox's state (it still
+fired with that checkbox confirmed unchecked). This was never fully
+re-verified in the interactive flow because Round 2 made it moot.
+
+**Round 2 — a deep-link URL, which is what's implemented.** NRE's
+journey-planner accepts a fully-parameterised query string that skips
+form-filling entirely:
+```
+https://www.nationalrail.co.uk/journey-planner/?type=single
+  &origin=OXF&destination=PAD&leavingType=departing
+  &leavingDate=DDMMYY&leavingHour=HH&leavingMin=MM
+  &adults=1&railcards=YNG%7C1&extraTime=0
+```
+(`OXF`/`PAD` are NRE's own CRS station codes; `YNG` is the 16-25 Railcard
+code — the same value originally hypothesised for Trainline, confirmed
+correct here too, coincidentally.) Navigating straight to this URL with
+tomorrow's date and the 07:25 target time loaded directly into real
+results — **no click needed, no redirect, no hijack, in every probe
+run** — showing "07:25 journey from Oxford to London Paddington" and
+"07:30 journey from Oxford to London Paddington" (both appear because the
+results list continues past the anchor time), each priced "Single from
+£30.60" in the rendered page text.
+
+Confirming the railcard discount specifically (CLAUDE.md: no alert
+without positive confirmation) required looking past the rendered text to
+the underlying data: the page makes a same-origin XHR to
+`jpservices.nationalrail.co.uk/journey-planner` returning structured JSON
+where each fare option carries a `railcardFares` array distinct from its
+`undiscountedPrices`, e.g.:
+```json
+{
+  "totalPrice": 3095,
+  "undiscountedPrices": {"adult": 4650, "child": 2325},
+  "railcardFares": [
+    {"code": "YNG", "count": 1, "prices": {"adult": 3060, "child": 0}}
+  ]
+}
+```
+`code: "YNG"` matching the railcard passed in the URL, with its own
+distinct (lower) price, is the positive, structured confirmation the
+project requires — a real amount, not an inference from the presence of
+the query parameter alone.
+
+This is the confirmation the standing "don't move on" instruction was
+gated on, and is why §2 onward below describes an NRE-based design
+rather than the Trainline one originally planned.
 
 ---
 
@@ -78,7 +167,8 @@ evasion escalation. If Plan B is needed, stop and report.
 | Decision | Choice | Rationale |
 | --- | --- | --- |
 | Language | Python 3.12 | Prior work was Python; Playwright has a first-class sync Python API; `zoneinfo` and `Decimal` are stdlib. |
-| Scraping | Playwright (sync API) + Chromium, reading the intercepted `/api/journey-search/` JSON response; DOM scrape as fallback | Raw HTTP is DataDome-blocked (§1.1). JSON is more stable than DOM text. |
+| Retailer | National Rail Enquiries, not Trainline | Trainline is DataDome-blocked, confirmed by two live blocked runs (§1.1-1.2). NRE has no bot protection, confirmed by 20+ live runs (§1.4). |
+| Scraping | Playwright (sync API) + Chromium, navigating straight to a deep-link URL (no form-filling) and reading the intercepted `jpservices.nationalrail.co.uk/journey-planner` JSON response; DOM scrape as fallback | The deep-link approach avoids the ad-hijack behaviour hit when interactively driving the form (§1.4). JSON is more stable than DOM text and carries a structured, positively-confirmable railcard discount. |
 | Dependency mgmt | `requirements.txt` + pip | One file, no extra tooling in CI. |
 | Money handling | `decimal.Decimal`, never `float` | `9.99` vs `9.989999…` must not decide whether an email is sent. |
 | Time handling | `zoneinfo.ZoneInfo("Europe/London")` everywhere | Runners are UTC; a 23:30 UTC run is already "tomorrow" in London for part of the year. |
@@ -114,22 +204,19 @@ edge case: during the summer holidays the candidate list is empty and the
 run is a clean no-op (log + exit 0, no email, no browser launched).
 
 **Volume implication, flagged for visibility rather than left implicit:**
-checked live against the actual term dates (see §1.4 below), a run on
+checked live against the actual term dates (see §1.5 below), a run on
 the first day of Autumn Term 2026 has **102 candidate dates** to check
 (and ~39 within just that one term). At an estimated 15-25s per date
 (browser navigation + a randomised inter-request pause), a full run
 early in the year takes on the order of 30-45 minutes and makes 100+
-sequential automated requests to Trainline from the same IP, once a
-day, every day. This directly compounds the DataDome IP-reputation risk
-already identified as the project's top risk in §1.3 — a burst of ~100
-requests is a much stronger bot signal than the ~6 requests the
-original 14-day design would have made. The user has explicitly chosen
-this tradeoff (fresh data on every remaining date, checked daily) over
-the lighter-weight alternative; it is documented here so a future
-DataDome block is understood as a consequence of this choice, not a bug.
-Mitigation stays the same as §1.3: self-hosted runner with a residential
-IP if GitHub-hosted runners get blocked. No proxies/stealth/CAPTCHA
-solvers.
+sequential automated requests to National Rail Enquiries from the same
+IP, once a day, every day. Unlike the abandoned Trainline design, this
+is not a known risk: NRE has no bot protection to trip (§1.4), so this
+volume mainly costs wall-clock run time (sized into Task 7's workflow
+timeout) rather than IP reputation. The user has explicitly chosen this
+tradeoff (fresh data on every remaining date, checked daily) over the
+lighter-weight alternative it superseded; it is documented here for
+visibility, not as an accepted risk.
 
 ### 2.3 Excluding already-booked dates (decided)
 
@@ -177,7 +264,7 @@ the Actions job).
 (see Task 6, updated below) — a booked date costs zero requests, not
 just zero alerts.
 
-### 1.4 Checkable-date counts (computed, not estimated)
+### 1.5 Checkable-date counts (computed, not estimated)
 
 Computed directly from the `CLAUDE.md` term data with the same weekday
 and exclusion rules `term_dates.py` implements:
@@ -248,7 +335,12 @@ time; pin exactly, no ranges.)
 `.gitignore`: `__pycache__/`, `*.pyc`, `.pytest_cache/`, `.venv/`,
 `artifacts/`, `.env`.
 
-`src/config.py` — module-level constants and an env-reading function:
+`src/config.py` — module-level constants and an env-reading function
+(**superseded by Task 3, see its "Modified" note — this is the original
+scaffold spec, kept for history; the fields below named `_URN`/
+`PASSENGER_DOB` no longer exist in the current `src/config.py`, replaced
+by `ORIGIN_CRS`/`DESTINATION_CRS`/`JOURNEY_PLANNER_URL_TEMPLATE`, which
+need no DOB**):
 - `ORIGIN_NAME = "Oxford"`, `DESTINATION_NAME = "London Paddington"`
 - `ORIGIN_URN` / `DESTINATION_URN` — leave as `None` with a `TODO(task-3)`
   comment; Task 3 fills them in with discovered values.
@@ -382,73 +474,98 @@ Functions:
 
 ### Task 3 — Playwright scraper + fixture capture
 
-This is the highest-risk task. Its goal is **raw data + a saved fixture**,
-not parsing.
+**Status: implemented**, against National Rail Enquiries rather than the
+Trainline design this task originally specified — see §1.4 for the full
+discovery story (two Trainline live-run blocks, an abandoned interactive
+NRE approach that hit an ad-hijack redirect, and the deep-link approach
+that replaced it). This section now documents what was actually built.
 
-**Create:** `src/scraper.py`, `scripts/capture_fixture.py`,
-`tests/fixtures/journey_search_sample.json`
-**Modify:** `src/config.py` (fill in `ORIGIN_URN`, `DESTINATION_URN`,
-confirm `RAILCARD_CODE`, record the confirmed results-URL template)
+**Created:** `src/scraper.py`
+**Modified:** `src/config.py` — `ORIGIN_CRS`/`DESTINATION_CRS`/
+`RAILCARD_CODE`/`JOURNEY_PLANNER_URL_TEMPLATE`/`JOURNEY_PLANNER_API_HOST`/
+`NRE_HOST_SUFFIX`, each with a comment recording how and when it was
+confirmed (2026-08-31, via `scripts/probe_nre_deeplink.py`).
+**Still outstanding from the original task scope:** `scripts/
+capture_fixture.py` exists (adapted, unchanged in shape) but has not yet
+been run to produce `tests/fixtures/journey_search_sample.json` — do this
+before starting Task 4, since Task 4's acceptance criteria depend on a
+real committed fixture.
 
-**Discovery step (do this first, interactively)**
+**Discovery, for the record**
 
-Using a Playwright script, load `https://www.thetrainline.com/`, fill in
-Oxford → London Paddington, one-way, a future date around 07:00, add the
-16-25 Railcard, and search. Record:
-1. The **exact results URL** the site produces (query-param names,
-   URN values for both stations, how the railcard and passenger DOB are
-   encoded).
-2. The **exact shape** of the `/api/journey-search/` response.
+Confirmed live via `scripts/probe_nre_deeplink.py` (a throwaway probe, not
+part of the production tool):
+1. The deep-link URL format (station CRS codes, `leavingDate` as
+   `DDMMYY`, `leavingHour`/`leavingMin`, `railcards=YNG%7C1`) — see §1.4
+   for the full URL and the real result it produced.
+2. The exact shape of the `jpservices.nationalrail.co.uk/journey-planner`
+   response: a top-level `outwardJourneys` array, each entry with
+   `origin`/`destination` (`crsCode`, `name`), `timetable.scheduled.
+   {departure,arrival}` as full ISO 8601 timestamps with a UTC offset
+   (e.g. `"2026-09-01T07:25:00+01:00"` — **not** a bare `"HH:MM"**), and a
+   nested fares structure whose individual fare objects carry
+   `totalPrice`/`undiscountedPrices` (integer **pence**, not pounds) and a
+   `railcardFares` array of `{code, count, prices: {adult, child}}` — the
+   presence of an entry with `code == config.RAILCARD_CODE` and its own
+   `prices.adult` is the positive railcard confirmation CLAUDE.md
+   requires (§2.1). Task 4 must capture a real fixture and inspect it
+   directly for the exact nesting from `outwardJourneys` down to
+   `railcardFares` before writing `parse_journeys` — the discovery above
+   names the fields, not their exact path in the object graph.
 
-Then write the deep-link URL template into `src/config.py` as
-`RESULTS_URL_TEMPLATE`, so production runs navigate straight to results
-without driving the form. Hypothesised template — **verify, do not
-assume**:
-```
-https://www.thetrainline.com/book/results
-  ?origin=<origin-urn>&destination=<dest-urn>
-  &outwardDate=<ISO local>&outwardDateType=departAfter
-  &journeySearchType=single&passengers[]=<dob>
-  &railcards[]=<code>%7C1&selectedTab=train
-```
-
-**What `src/scraper.py` does**
+**What `src/scraper.py` does (as built)**
 
 `fetch_journey_search(travel_date: date, *, artifacts_dir: Path | None = None, attempts: int = 3) -> dict`
 
-- Launch Chromium via the **sync** Playwright API (simpler in CI than
-  asyncio), `headless=True`, args including
-  `--disable-blink-features=AutomationControlled`, `--no-sandbox`.
+- Launch Chromium via the **sync** Playwright API, `headless=True`, args
+  including `--disable-blink-features=AutomationControlled`,
+  `--no-sandbox`.
 - `browser.new_context(locale="en-GB", timezone_id="Europe/London",
   viewport={"width":1440,"height":900}, user_agent=<current desktop
   Chrome UA>)`.
+- `context.route("**/*", handler)` — registered on the **context**,
+  before `new_page()`, so it's active for the very first navigation.
+  Blocks any cross-origin (non-`nationalrail.co.uk`) iframe *document*
+  load outright, and backstops any main-frame navigation away from
+  `nationalrail.co.uk` with a blank `fulfill()` (not `abort()`, which
+  leaves a Chrome error page instead of the intended content). Defense in
+  depth against the ad-hijack behaviour from §1.4 — never triggered by
+  the deep-link approach in any probe run, but cheap insurance for an
+  unattended daily job.
 - Register `page.on("response", handler)` **before** navigating; the
-  handler captures any response whose URL contains `journey-search`,
-  storing `status` and parsed JSON body.
-- Navigate to the templated results URL for `travel_date` at
-  `07:00` local, `wait_until="domcontentloaded"`.
+  handler captures any response whose URL contains
+  `config.JOURNEY_PLANNER_API_HOST`, storing `status` and parsed JSON
+  body.
+- Navigate to `_build_journey_planner_url(travel_date)` — anchored at
+  `min(config.TARGET_DEPARTURES)` (07:25) so one fetch's results list
+  covers both target departures — `wait_until="domcontentloaded"`.
 - Wait for the captured response, or for the results list to render, with
   an overall page budget of 45s.
 - Accept/dismiss the cookie banner if present (best-effort, never fatal —
-  wrap in try/except and continue).
-- Detect a block: the captured XHR status is 403, or the page URL/content
-  contains `captcha-delivery` / `geo.captcha-delivery.com`, or a DataDome
-  interstitial is present. Raise `BlockedError` (distinct from
-  `ScrapeError`) with a clear message.
-- Retry on `ScrapeError`/timeout up to `attempts` times with backoff
+  wrap in try/except and continue). Confirmed selector:
+  `#onetrust-accept-btn-handler`.
+- Detect a block: the captured XHR status is >= 400, or the page URL/
+  content contains a marker like `captcha`/`datadome`/`are you a robot`
+  (defense in depth — NRE has shown none of these on 20+ live runs).
+  Raise `BlockedError`.
+- Detect a hijack, distinct from a block: the current page URL's host is
+  no longer under `nationalrail.co.uk` at all. Raise `HijackedError`.
+- Retry on `ScraperError`/timeout up to `attempts` times with backoff
   (30s, 90s) and a fresh browser context each time. **Do not retry
-  `BlockedError` more than once** — hammering makes it worse.
+  `BlockedError`/`HijackedError` more than once** — hammering either
+  makes it worse.
 - On final failure, if `artifacts_dir` is set, write
   `screenshot-<date>.png`, `page-<date>.html`, and any captured raw
   response to that directory before raising.
 - Return the parsed JSON dict.
-- Exceptions: `ScraperError` base, `BlockedError`, `TimeoutScrapeError`.
+- Exceptions: `ScraperError` base, `BlockedError`, `HijackedError`,
+  `TimeoutScrapeError`.
 - Log every step to stdout with timestamps. **Never log secrets** (this
   module receives none — keep it that way).
 
 `scripts/capture_fixture.py` — CLI wrapper: takes `--date YYYY-MM-DD` and
 `--out PATH`, calls `fetch_journey_search`, pretty-prints the JSON to
-`--out`. Used to regenerate fixtures when Trainline changes its schema.
+`--out`. Used to regenerate fixtures if NRE changes its response schema.
 
 Run it once for a real term-time Tue/Thu/Fri date and commit the result
 as `tests/fixtures/journey_search_sample.json`. If the response contains
@@ -457,29 +574,41 @@ customer id), redact those fields before committing and note the
 redaction in the fixture's sibling `README` line or a `_note` key.
 
 **Acceptance criteria**
-- `python scripts/capture_fixture.py --date <a real term Tue/Thu/Fri> --out tests/fixtures/journey_search_sample.json` succeeds and produces a JSON file containing recognisable fares and a 07:25 and a 07:30 departure.
-- `src/config.py` has real, non-`None` URNs and a confirmed
-  `RESULTS_URL_TEMPLATE`, with a comment recording the date they were verified.
+- `python scripts/capture_fixture.py --date <a real term Tue/Thu/Fri> --out tests/fixtures/journey_search_sample.json` succeeds and produces a JSON file containing recognisable fares and a 07:25 and a 07:30 departure. **Not yet run — outstanding, see above.**
+- `src/config.py` has real, non-placeholder CRS codes and a confirmed
+  `JOURNEY_PLANNER_URL_TEMPLATE`, with a comment recording the date they
+  were verified. **Done.**
 - A forced-failure path (e.g. pointing at an unroutable URL) writes the
-  screenshot/HTML artifacts and raises, rather than returning `{}`.
+  screenshot/HTML artifacts and raises, rather than returning `{}`. Covered
+  by `tests/test_scraper.py::test_final_failure_writes_artifacts_before_raising`.
 - `src/scraper.py` imports cleanly without Playwright browsers installed
   (import Playwright lazily inside the function if needed) so unit tests
-  for other modules don't need a browser.
+  for other modules don't need a browser. Covered by
+  `tests/test_scraper.py::test_no_top_level_playwright_import` and
+  `test_import_succeeds_in_subprocess`.
 
 **Edge cases**
 - Cookie/consent banner present or absent — both must work.
 - Page renders but the XHR never fires (cached SSR) → fall back to
   reading the results DOM; if that also yields nothing, raise
-  `TimeoutScrapeError`, never return empty-but-successful.
-- DataDome CAPTCHA → `BlockedError`, distinct from "no trains found".
+  `TimeoutScrapeError`, never return empty-but-successful. The DOM
+  fallback selector (`RESULTS_DOM_SELECTOR`) is an unverified hypothesis —
+  every probe run captured the XHR successfully, so this path has never
+  actually been exercised against the real site.
+- Bot-protection markers → `BlockedError`, distinct from "no trains
+  found". Not observed against NRE in practice; kept as defense in depth.
+- Ad-hijack redirect away from `nationalrail.co.uk` → `HijackedError`,
+  distinct from both of the above. Not observed via the deep-link
+  approach in practice; kept as defense in depth (see §1.4).
 - Chromium binary missing → clear, actionable error message naming
   `playwright install chromium`.
 - Slow network → hard 45s page budget; the whole function must not exceed
   ~4 minutes including retries.
 
-**If DataDome blocks Playwright persistently: stop and report.** Do not
-add proxies, CAPTCHA solvers, or stealth plugins. Escalate to Plan B
-(self-hosted runner) with the planner.
+**If NRE starts blocking Playwright: stop and report.** Do not add
+proxies, CAPTCHA solvers, or stealth plugins — this would be new,
+unexpected behaviour from a site with no bot protection at any point in
+this project's testing, worth investigating before working around.
 
 ---
 
@@ -491,21 +620,32 @@ add proxies, CAPTCHA solvers, or stealth plugins. Escalate to Plan B
 **What the code does**
 
 `parse_journeys(raw: dict, travel_date: date) -> list[TrainOption]`
-- Walk the Task-3 response shape, producing one `TrainOption` per
-  outbound journey.
-- Departure time as `"HH:MM"` in **Europe/London**, converted from
-  whatever timezone/offset the response uses.
-- Price: cheapest available one-way fare for that journey, as `Decimal`
-  built from a **string**, not a float (`Decimal(str(x))` or
-  cents/100 via `Decimal`).
-- `railcard_applied`: True only when the response positively indicates a
-  16-25/Young Persons railcard discount on the fare (a discount card
-  list, a fare name, a `railcards` echo — whatever Task 3's discovery
-  showed). Default False when unclear.
-- `sold_out`: True when the journey exists but has no purchasable fare.
+- Walk `raw["outwardJourneys"]` (confirmed top-level key, see §1.4/Task
+  3), producing one `TrainOption` per outbound journey.
+- Departure/arrival time as `"HH:MM"` in **Europe/London**: each journey's
+  `timetable.scheduled.departure`/`.arrival` is a full ISO 8601 timestamp
+  **with its own UTC offset already applied** (e.g.
+  `"2026-09-01T07:25:00+01:00"`) — parse with
+  `datetime.fromisoformat(...).astimezone(config.LONDON)` and format
+  `"%H:%M"`, don't assume the offset is always `+01:00` (it's `+00:00`
+  outside BST).
+- Price: the 16-25-railcard fare specifically, not the cheapest fare
+  overall — find the fare option (whatever nested path Task 3's real
+  fixture shows fares live under) whose `railcardFares` array contains an
+  entry with `code == config.RAILCARD_CODE`, and use *that entry's*
+  `prices.adult` (integer pence — confirmed from the real response, see
+  Task 3), as `Decimal`, built by dividing the pence integer by
+  `Decimal("100")`, never via `float`.
+- `railcard_applied`: True only when such a `railcardFares` entry exists
+  for that fare. Default False when absent — this is the positive
+  confirmation CLAUDE.md requires; do not infer it from the request
+  having included a `railcards=` param.
+- `sold_out`: True when the journey exists but has no purchasable fare
+  matching the railcard (confirm the real fixture's shape for "no fare
+  available" before assuming a specific sentinel).
 - Raise `ParseError` on a structurally unrecognisable response (missing
-  the top-level container key) — that means Trainline changed schema and
-  a human must look.
+  `outwardJourneys`) — that means NRE changed schema and a human must
+  look.
 
 `select_target_trains(options, target_times) -> dict[str, TrainOption | None]`
 - Exact `"HH:MM"` match against `config.TARGET_DEPARTURES`.
@@ -537,10 +677,17 @@ add proxies, CAPTCHA solvers, or stealth plugins. Escalate to Plan B
 - Timetable change: neither 07:25 nor 07:30 present → both `None`, and
   the caller logs the departure times that *were* found.
 - Missing `arrival_time`, missing `fare_name` → `None`, not a crash.
-- Non-GBP currency in the response → keep the currency string; the
-  alerting layer refuses to compare non-GBP against the threshold.
-- Prices expressed in minor units (pence) vs major units — determine
-  which from the real fixture and assert it in a test with a comment.
+- Currency: no explicit currency field was observed anywhere in the
+  captured NRE response during discovery (unlike the field this task's
+  `Non-GBP currency` handling originally assumed) — confirm this against
+  the real committed fixture before assuming `"GBP"` unconditionally; if
+  a currency field does turn up, keep the existing non-GBP handling
+  (`TrainOption.currency` set from it; the alerting layer refuses to
+  compare non-GBP against the threshold).
+- Prices are in minor units (pence), confirmed from the real discovery
+  response (e.g. `"totalPrice": 3095`, `"prices": {"adult": 3060}`) — the
+  real fixture should be spot-checked to confirm this holds throughout,
+  and a test should assert it with a comment.
 
 ---
 
@@ -557,8 +704,8 @@ add proxies, CAPTCHA solvers, or stealth plugins. Escalate to Plan B
   first; append `(+N more)` when there are several).
 - Body: plain text **and** a simple HTML table — one row per match with
   date, departure time, arrival, price, direct/changes, and a link to the
-  Trainline results page for that date (reuse
-  `config.RESULTS_URL_TEMPLATE`).
+  National Rail Enquiries results page for that date (reuse
+  `config.JOURNEY_PLANNER_URL_TEMPLATE`).
 - POSTs to `https://api.resend.com/emails` with
   `Authorization: Bearer <key>`, JSON body `{from, to, subject, text, html}`,
   `timeout=20`.
@@ -700,7 +847,7 @@ monkeypatching `datetime`)
 - `MAX_DATES=1` with many real candidates → exactly one date checked.
 - Today the first day of Autumn Term 2026 → candidate list has 102
   entries (regression guard on the "check everything to year end" scope,
-  matching §1.4 of the plan).
+  matching §1.5 of the plan).
 - Non-GBP currency → excluded from matches, warning logged.
 - Duplicate matches for the same date+time → de-duplicate before emailing.
 
@@ -799,10 +946,11 @@ pull_request — no secrets, no Playwright browsers needed.
   - **GitHub disables scheduled workflows in repositories with no commit
     activity for 60 days.** Push any commit, or trigger the workflow
     manually, to re-arm it. Watch for GitHub's warning email.
-  - If runs start failing with `BlockedError`, Trainline's bot protection
-    has flagged the runner IP; see Plan B in
-    `docs/plans/001-train-price-alert.md` §1.3 (move to a self-hosted
-    runner).
+  - If runs start failing with `BlockedError` or `HijackedError`, National
+    Rail Enquiries' page behaviour has changed (it has no bot protection
+    as of this writing — see §1.4) or a third-party ad script is
+    redirecting the tab; check the debug artifacts first, since this is
+    unexpected rather than a known, mitigated risk.
 - How failures are surfaced: the job exits non-zero, GitHub emails the
   repository owner on scheduled-workflow failure, and debug artifacts
   (screenshot + page HTML) are attached to the failed run for 7 days.

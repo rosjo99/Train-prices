@@ -26,6 +26,14 @@ from src import scraper
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
+NRE_JOURNEY_PLANNER_URL = (
+    "https://www.nationalrail.co.uk/journey-planner/"
+    "?type=single&origin=OXF&destination=PAD&leavingType=departing"
+    "&leavingDate=080926&leavingHour=07&leavingMin=25"
+    "&adults=1&railcards=YNG%7C1&extraTime=0#O"
+)
+API_RESPONSE_URL = "https://jpservices.nationalrail.co.uk/journey-planner"
+
 
 # ---------------------------------------------------------------------------
 # Fakes: a minimal stand-in for the bits of Playwright's sync API that
@@ -77,7 +85,7 @@ class FakePage:
         responses: list[FakeResponse] | None = None,
         banner_present: bool = False,
         dom_html: str | None = None,
-        url: str = "https://www.thetrainline.com/book/results",
+        url: str = NRE_JOURNEY_PLANNER_URL,
         content: str = "<html>ok</html>",
         goto_raises: Exception | None = None,
     ):
@@ -134,6 +142,10 @@ class FakePage:
 class FakeContext:
     def __init__(self, page: FakePage):
         self._page = page
+        self.routes: list[tuple[str, Any]] = []
+
+    def route(self, pattern: str, handler: Any) -> None:
+        self.routes.append((pattern, handler))
 
     def new_page(self) -> FakePage:
         return self._page
@@ -196,12 +208,13 @@ def install_fake_playwright(monkeypatch: pytest.MonkeyPatch, chromium: ScenarioC
 
 @pytest.fixture(autouse=True)
 def _set_route_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Override config with fixed test URNs, independent of whatever real
-    values config.ORIGIN_URN/DESTINATION_URN currently hold, so these tests
-    don't depend on (or break when someone updates) the real route config.
+    """Override config with fixed test CRS codes, independent of whatever
+    real values config.ORIGIN_CRS/DESTINATION_CRS currently hold, so these
+    tests don't depend on (or break when someone updates) the real route
+    config.
     """
-    monkeypatch.setattr(scraper.config, "ORIGIN_URN", "urn:trainline:generic:loc:1234")
-    monkeypatch.setattr(scraper.config, "DESTINATION_URN", "urn:trainline:generic:loc:5678")
+    monkeypatch.setattr(scraper.config, "ORIGIN_CRS", "OXF")
+    monkeypatch.setattr(scraper.config, "DESTINATION_CRS", "PAD")
 
 
 @pytest.fixture(autouse=True)
@@ -263,26 +276,44 @@ def test_import_succeeds_in_subprocess():
 # ---------------------------------------------------------------------------
 
 
-def test_build_results_url_contains_expected_pieces():
-    url = scraper._build_results_url(date(2026, 9, 8))
-    assert "urn:trainline:generic:loc:1234" in url
-    assert "urn:trainline:generic:loc:5678" in url
-    assert "2026-09-08T07:00:00" in url
-    assert "railcards[]=" in url
+def test_build_journey_planner_url_contains_expected_pieces():
+    url = scraper._build_journey_planner_url(date(2026, 9, 8))
+    assert "origin=OXF" in url
+    assert "destination=PAD" in url
+    # DDMMYY, NRE's own format (confirmed from a real example URL) — not ISO.
+    assert "leavingDate=080926" in url
+    # Anchored at the earliest target departure so one fetch covers both.
+    assert "leavingHour=07" in url
+    assert "leavingMin=25" in url
+    assert "railcards=" in url
 
 
 @pytest.mark.parametrize(
     "status,url,content,expected",
     [
-        (403, "https://www.thetrainline.com/book/results", "ok", True),
-        (200, "https://geo.captcha-delivery.com/captcha/?x=1", "ok", True),
-        (200, "https://www.thetrainline.com/book/results", "please solve this captcha-delivery challenge", True),
-        (200, "https://www.thetrainline.com/book/results", "ok", False),
-        (None, "https://www.thetrainline.com/book/results", "ok", False),
+        (403, NRE_JOURNEY_PLANNER_URL, "ok", True),
+        (500, NRE_JOURNEY_PLANNER_URL, "ok", True),
+        (200, NRE_JOURNEY_PLANNER_URL, "please solve this captcha challenge", True),
+        (200, NRE_JOURNEY_PLANNER_URL, "are you a robot?", True),
+        (200, NRE_JOURNEY_PLANNER_URL, "ok", False),
+        (None, NRE_JOURNEY_PLANNER_URL, "ok", False),
     ],
 )
 def test_looks_blocked(status, url, content, expected):
     assert scraper._looks_blocked(status, url, content) is expected
+
+
+@pytest.mark.parametrize(
+    "current_url,expected",
+    [
+        (NRE_JOURNEY_PLANNER_URL, False),
+        ("https://www.nationalrail.co.uk/some-other-page", False),
+        ("https://www.booking.com/searchresults.html?ss=London", True),
+        ("", False),
+    ],
+)
+def test_looks_hijacked(current_url, expected):
+    assert scraper._looks_hijacked(current_url) is expected
 
 
 # ---------------------------------------------------------------------------
@@ -290,17 +321,13 @@ def test_looks_blocked(status, url, content, expected):
 # ---------------------------------------------------------------------------
 
 
-def _journey_search_response(body: dict[str, Any]) -> FakeResponse:
-    return FakeResponse(
-        url="https://www.thetrainline.com/api/journey-search/",
-        status=200,
-        body=body,
-    )
+def _journey_planner_response(body: dict[str, Any]) -> FakeResponse:
+    return FakeResponse(url=API_RESPONSE_URL, status=200, body=body)
 
 
 def test_successful_fetch_returns_captured_json_body(monkeypatch):
-    body = {"journeys": [{"departure": "07:25"}]}
-    page = FakePage(responses=[_journey_search_response(body)])
+    body = {"outwardJourneys": [{"timetable": {"scheduled": {"departure": "07:25"}}}]}
+    page = FakePage(responses=[_journey_planner_response(body)])
     chromium = ScenarioChromium(pages=[page])
     install_fake_playwright(monkeypatch, chromium)
 
@@ -310,10 +337,26 @@ def test_successful_fetch_returns_captured_json_body(monkeypatch):
     assert chromium.launch_calls == 1
 
 
+def test_context_route_is_registered_before_new_page(monkeypatch):
+    """The iframe/hijack route guard must be installed on the context
+    before new_page() is called, so it's active for the very first
+    navigation.
+    """
+    body = {"outwardJourneys": []}
+    page = FakePage(responses=[_journey_planner_response(body)])
+    chromium = ScenarioChromium(pages=[page])
+    install_fake_playwright(monkeypatch, chromium)
+
+    scraper.fetch_journey_search(date(2026, 9, 8), attempts=1)
+
+    browser = chromium.browsers[0]
+    assert browser.contexts_created == 1
+
+
 @pytest.mark.parametrize("banner_present", [True, False])
 def test_cookie_banner_present_or_absent_both_succeed(monkeypatch, banner_present):
-    body = {"journeys": []}
-    page = FakePage(responses=[_journey_search_response(body)], banner_present=banner_present)
+    body = {"outwardJourneys": []}
+    page = FakePage(responses=[_journey_planner_response(body)], banner_present=banner_present)
     chromium = ScenarioChromium(pages=[page])
     install_fake_playwright(monkeypatch, chromium)
 
@@ -353,9 +396,7 @@ def test_no_xhr_and_no_dom_raises_timeout_not_empty_success(monkeypatch):
 
 
 def test_blocked_via_403_status_raises_blocked_error(monkeypatch):
-    body_response = FakeResponse(
-        url="https://www.thetrainline.com/api/journey-search/", status=403, body=None
-    )
+    body_response = FakeResponse(url=API_RESPONSE_URL, status=403, body=None)
     page = FakePage(responses=[body_response])
     chromium = ScenarioChromium(pages=[page])
     install_fake_playwright(monkeypatch, chromium)
@@ -365,7 +406,7 @@ def test_blocked_via_403_status_raises_blocked_error(monkeypatch):
 
 
 def test_blocked_via_captcha_content_raises_blocked_error(monkeypatch):
-    page = FakePage(responses=[], content="oops, a captcha-delivery interstitial")
+    page = FakePage(responses=[], content="oops, a captcha challenge")
     chromium = ScenarioChromium(pages=[page])
     install_fake_playwright(monkeypatch, chromium)
 
@@ -374,9 +415,7 @@ def test_blocked_via_captcha_content_raises_blocked_error(monkeypatch):
 
 
 def test_blocked_error_retried_at_most_once(monkeypatch, _no_real_sleep):
-    blocked_response = FakeResponse(
-        url="https://www.thetrainline.com/api/journey-search/", status=403, body=None
-    )
+    blocked_response = FakeResponse(url=API_RESPONSE_URL, status=403, body=None)
     pages = [FakePage(responses=[blocked_response]) for _ in range(3)]
     chromium = ScenarioChromium(pages=pages)
     install_fake_playwright(monkeypatch, chromium)
@@ -390,16 +429,36 @@ def test_blocked_error_retried_at_most_once(monkeypatch, _no_real_sleep):
     assert _no_real_sleep == [30]
 
 
+def test_hijacked_raises_and_is_retried_at_most_once(monkeypatch, _no_real_sleep):
+    """A page that ends up off nationalrail.co.uk entirely (the ad-hijack
+    behaviour described in scraper's docstring, never observed via the
+    deep-link approach but guarded against) must raise HijackedError and
+    back off exactly like a block, not be treated as "no results".
+    """
+    pages = [
+        FakePage(responses=[], url="https://www.booking.com/searchresults.html")
+        for _ in range(3)
+    ]
+    chromium = ScenarioChromium(pages=pages)
+    install_fake_playwright(monkeypatch, chromium)
+
+    with pytest.raises(scraper.HijackedError):
+        scraper.fetch_journey_search(date(2026, 9, 8), attempts=3)
+
+    assert chromium.launch_calls == 2
+    assert _no_real_sleep == [30]
+
+
 # ---------------------------------------------------------------------------
 # Retry / backoff on non-blocking failures
 # ---------------------------------------------------------------------------
 
 
 def test_retry_backoff_and_fresh_context_each_attempt(monkeypatch, _no_real_sleep):
-    ok_body = {"journeys": [{"departure": "07:25"}]}
+    ok_body = {"outwardJourneys": [{"timetable": {"scheduled": {"departure": "07:25"}}}]}
     failing_page_1 = FakePage(responses=[], dom_html=None)  # -> TimeoutScrapeError
     failing_page_2 = FakePage(responses=[], dom_html=None)  # -> TimeoutScrapeError
-    succeeding_page = FakePage(responses=[_journey_search_response(ok_body)])
+    succeeding_page = FakePage(responses=[_journey_planner_response(ok_body)])
     chromium = ScenarioChromium(pages=[failing_page_1, failing_page_2, succeeding_page])
     install_fake_playwright(monkeypatch, chromium)
 
@@ -481,12 +540,7 @@ def test_navigation_timeout_raises_timeout_scrape_error(monkeypatch):
 
 
 def test_final_failure_writes_artifacts_before_raising(monkeypatch, tmp_path):
-    partly_captured = FakeResponse(
-        url="https://www.thetrainline.com/api/journey-search/",
-        status=200,
-        body=None,
-        bad_json=True,
-    )
+    partly_captured = FakeResponse(url=API_RESPONSE_URL, status=200, body=None, bad_json=True)
     page = FakePage(responses=[partly_captured], dom_html=None, content="<html>no luck</html>")
     chromium = ScenarioChromium(pages=[page])
     install_fake_playwright(monkeypatch, chromium)

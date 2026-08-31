@@ -25,17 +25,13 @@ class ConfigError(Exception):
 ORIGIN_NAME = "Oxford"
 DESTINATION_NAME = "London Paddington"
 
-# Confirmed live on 2026-08-31 by fetching
-# https://www.thetrainline.com/stations/oxford and .../stations/london-paddington
-# directly (plain HTTP GET — these static pages are not DataDome-gated) and
-# reading the embedded `"station":{"code": "urn:trainline:...", "name": ...}`
-# object, which named "Oxford" / "London Paddington" respectively. Then
-# cross-checked by requesting RESULTS_URL_TEMPLATE with these values (again
-# plain HTTP, no browser) and confirming the server-rendered page title read
-# "Search Results" with "Oxford" correctly present in the embedded route
-# state — i.e. the site accepted and correctly resolved both URNs.
-ORIGIN_URN: str | None = "urn:trainline:generic:loc:OXF3115gb"
-DESTINATION_URN: str | None = "urn:trainline:generic:loc:PAD3087gb"
+# National Rail Enquiries CRS (station) codes. Confirmed live on
+# 2026-08-31 via scripts/probe_nre_deeplink.py: navigating to
+# JOURNEY_PLANNER_URL_TEMPLATE below with these two codes returned a
+# results page showing "Oxford to London Paddington" and real journeys
+# (see JOURNEY_PLANNER_API_HOST's comment for the fare evidence).
+ORIGIN_CRS = "OXF"
+DESTINATION_CRS = "PAD"
 
 TARGET_DEPARTURES: tuple[str, ...] = ("07:25", "07:30")
 
@@ -43,40 +39,54 @@ TARGET_DEPARTURES: tuple[str, ...] = ("07:25", "07:30")
 
 PRICE_THRESHOLD = Decimal("10.00")
 
-# Confirmed live on 2026-08-31 (same plain-HTTP check as the URNs above):
-# passing railcards[]=16-25|1 in the results URL is accepted and echoed back
-# verbatim in the server-rendered route state as "railcards":["16-25|1"] —
-# "YNG" (the original hypothesis) does not appear anywhere in that response.
-# NOT YET FULLY CONFIRMED: whether "16-25" actually causes the 16-25
-# discount to be applied to the fare, since that only shows up in the
-# journey-search XHR response, which requires a real, DataDome-cleared
-# browser session (src.scraper) — this sandbox cannot make that request.
-# A GitHub Actions run (real internet access) is needed to confirm the
-# discount is genuinely applied before this is fully trusted.
-RAILCARD_CODE = "16-25"
+# Confirmed live on 2026-08-31 via scripts/probe_nre_deeplink.py: passing
+# railcards=YNG|1 in the deep-link URL produced a real fare response whose
+# jpservices.nationalrail.co.uk/journey-planner JSON contained, per fare,
+# a "railcardFares" array entry with "code": "YNG" and a discounted
+# "prices.adult" distinct from that fare's own "undiscountedPrices" — e.g.
+# one Advance Single fare had undiscountedPrices.adult=4650 (pence) and a
+# railcardFares entry {"code": "YNG", "count": 1, "prices": {"adult": 3060}}.
+# This is the positive, structured confirmation CLAUDE.md requires before
+# any alert can be sent (see src/parser.py, not yet written, for where
+# this gets checked per-fare). "YNG" was the original hypothesis carried
+# over from the abandoned Trainline attempt and turned out to be correct
+# for NRE too — a coincidence, not carried-over evidence.
+RAILCARD_CODE = "YNG"
 
-# Date of birth used for the passenger, chosen to sit inside the 16-25
-# railcard eligibility window (16th to 30th birthday) as of the target
-# travel dates (school terms through 2027-07-08). NOTE: revisit this if
-# the tool is still running past 2028 — by then this DOB will have aged
-# out of the 16-25 window.
-PASSENGER_DOB = "2003-01-01"
-
-# Confirmed live on 2026-08-31: this exact query-string shape, with the
-# URNs/railcard code above substituted in, was fetched with a plain HTTP
-# GET (no browser) and the server rendered a "Search Results" page with
-# Oxford/London Paddington correctly recognised as the origin/destination
-# in the embedded route state. NOT YET FULLY CONFIRMED: whether this
-# produces the expected fares and railcard discount in the journey-search
-# XHR specifically (that response is only available after a real,
-# DataDome-cleared browser session — see RAILCARD_CODE's comment above).
-RESULTS_URL_TEMPLATE = (
-    "https://www.thetrainline.com/book/results"
-    "?origin={origin_urn}&destination={destination_urn}"
-    "&outwardDate={outward_date}&outwardDateType=departAfter"
-    "&journeySearchType=single&passengers[]={passenger_dob}"
-    "&railcards[]={railcard_code}%7C1&selectedTab=train"
+# Confirmed live on 2026-08-31 via scripts/probe_nre_deeplink.py: this
+# exact query-string shape, with the CRS codes/railcard code above
+# substituted in, loaded straight into a real results page — no click
+# needed — showing "07:25 journey from Oxford to London Paddington" and
+# "07:30 journey from Oxford to London Paddington" each priced at
+# "Single from £30.60", and made a same-origin XHR to
+# JOURNEY_PLANNER_API_HOST carrying the full fare JSON (see
+# RAILCARD_CODE's comment above for the discount evidence in that JSON).
+# No DOB or passenger name is needed, unlike Trainline's abandoned
+# RESULTS_URL_TEMPLATE — "adults=1" is sufficient. `leaving_date` is
+# DDMMYY (NRE's own format, confirmed from a real example URL), not ISO.
+JOURNEY_PLANNER_URL_TEMPLATE = (
+    "https://www.nationalrail.co.uk/journey-planner/"
+    "?type=single&origin={origin_crs}&destination={destination_crs}"
+    "&leavingType=departing&leavingDate={leaving_date}"
+    "&leavingHour={leaving_hour}&leavingMin={leaving_minute}"
+    "&adults=1&railcards={railcard_code}%7C1&extraTime=0#O"
 )
+
+# The same-origin API NRE's own journey-planner page calls to fetch fares
+# (confirmed live on 2026-08-31): a request to this host, made by the page
+# itself after JOURNEY_PLANNER_URL_TEMPLATE loads, returns the structured
+# JSON src.scraper captures — no DataDome/CAPTCHA gate, unlike Trainline
+# (see CLAUDE.md's Tech decisions for the full comparison).
+JOURNEY_PLANNER_API_HOST = "jpservices.nationalrail.co.uk"
+
+# Every page on nationalrail.co.uk loads third-party ad/tracking scripts,
+# one of which was observed (during interactive UI-driven probing, not the
+# deep-link approach this scraper actually uses) redirecting the whole tab
+# to a Booking.com hotel search. The deep-link approach never triggered
+# this in any probe run, but src.scraper still guards against it — see
+# its NRE_HOST_SUFFIX usage — as cheap defense in depth for an unattended
+# daily job, since the underlying ad ecosystem is outside our control.
+NRE_HOST_SUFFIX = "nationalrail.co.uk"
 
 # --- Time ------------------------------------------------------------
 
