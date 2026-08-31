@@ -123,8 +123,32 @@ def main() -> int:
             ),
         )
         context.route("**/*", _route_handler)
+
+        # User's hypothesis, worth taking seriously: in a real browser this
+        # "Find hotels" widget likely opens window.open(url, "_blank") — a
+        # harmless new tab. window.open() only actually opens a new tab when
+        # called synchronously inside a trusted user gesture; if the ad
+        # script does it after an async step (a common pattern — ping an ad
+        # server, then open the deal page), the gesture window can lapse and
+        # some scripts fall back to window.location = url instead, hijacking
+        # the current tab. Playwright's synthetic clicks may not sustain
+        # that gesture the way continuous real input does, which would
+        # explain why this never bothers a human but reliably hijacks us
+        # here. Neutralising window.open at the JS level, before any page
+        # script runs, tests this directly and stops the redirect at its
+        # origin rather than reacting to it over the network after the tab
+        # has already started navigating away.
+        context.add_init_script(
+            "window.open = () => { console.log('[probe] window.open suppressed'); return null; };"
+        )
         page = context.new_page()
         page.on("response", on_response)
+        page.on(
+            "console",
+            lambda msg: print(f"[console.{msg.type}] {msg.text}", flush=True)
+            if "probe" in msg.text or "error" in msg.type
+            else None,
+        )
 
         print("navigating to journey planner...", flush=True)
         page.goto(
