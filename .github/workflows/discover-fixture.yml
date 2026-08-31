@@ -88,7 +88,11 @@ jobs:
       - run: playwright install --with-deps chromium
       - name: Probe National Rail Enquiries
         run: |
-          python scripts/probe_nre.py --date "2026-09-08" --out /tmp/nre_probe
+          # No --date: the script defaults to tomorrow (Europe/London),
+          # computed fresh on every run. A hardcoded date here would
+          # eventually fall into the past as this workflow keeps
+          # re-running across real days while iterating.
+          python scripts/probe_nre.py --out /tmp/nre_probe
       - name: Print captured responses
         if: always()
         run: |

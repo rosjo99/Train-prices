@@ -5,7 +5,8 @@ site can be driven by a real browser without hitting bot protection, and
 to capture whatever network requests carry fare data so src/scraper.py
 and src/config.py can be rewritten against NRE instead of Trainline.
 
-Usage: python scripts/probe_nre.py --date 2026-09-08 --out /tmp/nre_probe
+Usage: python scripts/probe_nre.py --out /tmp/nre_probe
+       python scripts/probe_nre.py --date 2026-09-08 --out /tmp/nre_probe
 """
 
 from __future__ import annotations
@@ -14,13 +15,30 @@ import argparse
 import json
 import re
 import sys
-from datetime import date
+from datetime import date, datetime, timedelta
 from pathlib import Path
+from zoneinfo import ZoneInfo
+
+LONDON = ZoneInfo("Europe/London")
 
 
 def main() -> int:
+    # Default to tomorrow (Europe/London), not a hardcoded date: this
+    # workflow re-runs on every push while iterating, over however many
+    # real days that takes, and a fixed date left in --date/the workflow
+    # YAML would eventually fall into the past — NRE's journey planner
+    # errors or behaves unpredictably for a past travel date, which would
+    # corrupt the very diagnostic signal this probe exists to produce.
+    # Computed from Europe/London's current date specifically (not the
+    # runner's UTC clock) to match the rest of the project's date handling.
+    tomorrow = (datetime.now(LONDON).date() + timedelta(days=1)).isoformat()
     parser = argparse.ArgumentParser()
-    parser.add_argument("--date", required=True, type=date.fromisoformat)
+    parser.add_argument(
+        "--date",
+        default=tomorrow,
+        type=date.fromisoformat,
+        help=f"Travel date, YYYY-MM-DD (default: tomorrow, {tomorrow})",
+    )
     parser.add_argument("--out", required=True, type=Path)
     args = parser.parse_args()
 
@@ -364,6 +382,47 @@ def main() -> int:
                 print("  ELEM:", html, flush=True)
         except Exception as exc:
             print(f"element dump failed: {exc}", flush=True)
+
+        # Root-cause candidate for the persistent Booking.com redirect,
+        # found by inspecting the screenshots: #leaving-date defaults to
+        # TODAY ("31 Aug 2026" in this run's dump) and args.date was parsed
+        # but never actually applied to the form anywhere — every prior run
+        # searched today's date regardless of --date. Both target
+        # departures (07:25/07:30) are hours in the past by the time this
+        # runs, so NRE most likely finds zero valid journeys and its own
+        # "no trains found" flow offers a hotel search instead — unrelated
+        # to the find_hotels checkbox state, which matches every run so far
+        # showing the redirect regardless of that checkbox's value, and the
+        # redirect's checkin/checkout params always being today's date.
+        # There are dedicated one-click #button-today-leaving-date /
+        # #button-tomorrow-leaving-date buttons for those two common cases;
+        # anything else types the target date directly into #leaving-date.
+        def _set_leaving_date(target) -> None:
+            today_local = datetime.now(LONDON).date()
+            try:
+                if target == today_local:
+                    page.locator("#button-today-leaving-date").click(timeout=3000)
+                    print(f"clicked #button-today-leaving-date for {target.isoformat()}", flush=True)
+                elif target == today_local + timedelta(days=1):
+                    page.locator("#button-tomorrow-leaving-date").click(timeout=3000)
+                    print(f"clicked #button-tomorrow-leaving-date for {target.isoformat()}", flush=True)
+                else:
+                    formatted = target.strftime("%d %b %Y")
+                    date_input = page.locator("#leaving-date")
+                    date_input.click(timeout=3000)
+                    date_input.fill(formatted, timeout=3000)
+                    page.keyboard.press("Enter")
+                    print(f"filled #leaving-date with {formatted!r}", flush=True)
+                page.wait_for_timeout(500)
+            except Exception as exc:
+                print(f"setting leaving date failed: {exc}", flush=True)
+            try:
+                confirmed = page.locator("#leaving-date").input_value()
+                print(f"confirmed value of #leaving-date: {confirmed!r}", flush=True)
+            except Exception as exc:
+                print(f"reading #leaving-date value failed: {exc}", flush=True)
+
+        _set_leaving_date(args.date)
 
         def _force_uncheck_via_native_setter(label: str) -> None:
             """A plain .click() on the checkbox executed without error in a
