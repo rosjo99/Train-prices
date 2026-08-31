@@ -65,22 +65,6 @@ def main() -> int:
     # it's purely "don't let an ad hijack the tab", same as a pop-up
     # blocker.
     NRE_HOST_SUFFIX = "nationalrail.co.uk"
-    # Expanded from every ad/tracking domain observed across prior runs'
-    # captured_responses.json — belt-and-suspenders alongside the CSP
-    # injection below, which should make this list largely redundant (CSP
-    # blocks script *execution* outright; this blocks specific iframe
-    # *documents* from loading at all).
-    AD_IFRAME_HOST_KEYWORDS = (
-        "doubleclick.net", "googlesyndication.com", "openx.net",
-        "booking.com", "adnxs.com", "taboola.com", "outbrain.com",
-        "criteo.com", "amazon-adsystem.com", "pubmatic.com",
-        "rubiconproject.com", "casalemedia.com", "adsrvr.org",
-        "eyeota.net", "launchpad.privacymanager.io", "hadronid.net",
-        "hadron.ad.gt", "agkn.com", "ccgateway.net", "liadm.com",
-        "3lift.com", "gumgum.com", "ad.gt", "scorecardresearch.com",
-        "confiant-integrations.net", "intergient.com", "surveygizmo.eu",
-        "gum.criteo.com", "cdn.hadronid.net",
-    )
     csp_injected_once = False
 
     def _route_handler(route):
@@ -103,10 +87,33 @@ def main() -> int:
                 and frame is not None
                 and frame.parent_frame is not None
             )
-            if is_subframe_doc and any(kw in request.url for kw in AD_IFRAME_HOST_KEYWORDS):
-                print(f"blocked ad iframe: {request.url}", flush=True)
-                route.abort()
-                return
+            if is_subframe_doc:
+                from urllib.parse import urlparse as _urlparse
+
+                sub_host = _urlparse(request.url).hostname or ""
+                # Run 18 evidence: the top-frame JS overrides below (fake
+                # window.open, suppress location.assign/.replace, override
+                # the href setter) never once logged as firing, yet the
+                # booking.com redirect still happened ~400ms after the
+                # click — regardless. Browsers let a CROSS-ORIGIN iframe
+                # call top.location.assign()/.replace() directly, as a
+                # deliberate carve-out that a parent page's own JS cannot
+                # intercept or shadow (unlike same-origin navigation calls).
+                # That fully explains the pattern: the redirect isn't coming
+                # from our own frame's JS at all, it's issued by some ad
+                # iframe we haven't identified. A curated domain keyword
+                # list is always one unseen domain behind. Flip from
+                # denylist to allowlist: block ANY cross-origin iframe
+                # *document* load outright, whatever its domain, keeping
+                # only nationalrail.co.uk's own iframes (if any) alive.
+                # This only blocks iframe navigations — other resource
+                # types (script/xhr/img) from ad hosts still load, which
+                # earlier testing showed the page's own click handling
+                # depends on.
+                if not sub_host.endswith(NRE_HOST_SUFFIX):
+                    print(f"blocked cross-origin iframe (allowlist): {request.url}", flush=True)
+                    route.abort()
+                    return
 
             is_main_frame_nav = (
                 request.is_navigation_request()
