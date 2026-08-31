@@ -4,3 +4,8 @@ __pycache__/
 .venv/
 artifacts/
 .env
+
+# Generated fresh at deploy time by .github/workflows/deploy-pages.yml
+# (python scripts/export_terms.py) — not checked in, since a committed
+# copy would just go stale between deploys.
+site/terms.json

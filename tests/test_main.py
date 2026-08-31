@@ -13,6 +13,7 @@ from __future__ import annotations
 import datetime as datetime_module
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -117,6 +118,29 @@ def _no_max_dates(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.fixture(autouse=True)
 def _dry_run_off(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(main.config, "DRY_RUN", False)
+
+
+@pytest.fixture(autouse=True)
+def _skip_time_gate_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Every existing test here is exercising something other than the
+    # RUN_HOUR_LONDON gate — bypass it by default so tests aren't flaky
+    # depending on the wall-clock hour they happen to run at. The gate
+    # itself gets its own dedicated tests below with this turned off.
+    monkeypatch.setattr(main.config, "SKIP_TIME_GATE", True)
+
+
+@pytest.fixture(autouse=True)
+def _send_test_email_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(main.config, "SEND_TEST_EMAIL", False)
+
+
+@pytest.fixture(autouse=True)
+def _isolated_price_log(tmp_path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    # Without this, every test below would append real rows to the
+    # repo's actual price-history.csv on disk.
+    path = tmp_path / "price-history.csv"
+    monkeypatch.setattr(main.config, "PRICE_LOG_PATH", path)
+    return path
 
 
 # ---------------------------------------------------------------------------
@@ -514,3 +538,124 @@ def test_evaluate_railcard_unconfirmed_flag():
 
     assert matches == []
     assert railcard_unconfirmed is True
+
+
+# ---------------------------------------------------------------------------
+# RUN_HOUR_LONDON time gate (8pm British time)
+# ---------------------------------------------------------------------------
+
+
+def _london_at(hour: int, minute: int = 0) -> datetime_module.datetime:
+    return datetime_module.datetime(2026, 9, 7, hour, minute, tzinfo=config.LONDON)
+
+
+def test_wrong_hour_is_a_noop_scraper_never_called(monkeypatch):
+    monkeypatch.setattr(main.config, "SKIP_TIME_GATE", False)
+    fetch_calls = _install_fake_scraper(monkeypatch, {})
+
+    result = main.main(today=TERM_TIME_DAY, now=_london_at(19, 0))
+
+    assert result == 0
+    assert fetch_calls == []
+
+
+def test_correct_hour_runs_normally(monkeypatch):
+    monkeypatch.setattr(main.config, "SKIP_TIME_GATE", False)
+    travel_date = date(2026, 9, 8)
+    fetch_calls = _install_fake_scraper(monkeypatch, {travel_date: _raw()})
+    monkeypatch.setattr(main.config, "MAX_DATES", 1)
+
+    result = main.main(today=TERM_TIME_DAY, now=_london_at(config.RUN_HOUR_LONDON, 0))
+
+    assert result == 0
+    assert fetch_calls == [travel_date]
+
+
+def test_skip_time_gate_bypasses_wrong_hour(monkeypatch):
+    # SKIP_TIME_GATE is already True via the autouse fixture, but assert
+    # it explicitly here since this is the behaviour that fixture exists
+    # to provide for every other test in this file.
+    monkeypatch.setattr(main.config, "SKIP_TIME_GATE", True)
+    travel_date = date(2026, 9, 8)
+    fetch_calls = _install_fake_scraper(monkeypatch, {travel_date: _raw()})
+    monkeypatch.setattr(main.config, "MAX_DATES", 1)
+
+    result = main.main(today=TERM_TIME_DAY, now=_london_at(3, 0))
+
+    assert result == 0
+    assert fetch_calls == [travel_date]
+
+
+# ---------------------------------------------------------------------------
+# SEND_TEST_EMAIL
+# ---------------------------------------------------------------------------
+
+
+def test_send_test_email_sends_one_synthetic_alert_no_scraping(monkeypatch):
+    monkeypatch.setattr(main.config, "SEND_TEST_EMAIL", True)
+    fetch_calls = _install_fake_scraper(monkeypatch, {})
+    send_calls = _install_fake_notifier(monkeypatch)
+
+    result = main.main(today=TERM_TIME_DAY)
+
+    assert result == 0
+    assert fetch_calls == []
+    assert len(send_calls) == 1
+    assert send_calls[0]["dry_run"] is False
+    assert len(send_calls[0]["matches"]) == 1
+
+
+def test_send_test_email_ignores_dry_run(monkeypatch):
+    # A test email's whole purpose is confirming real delivery, so it
+    # must always be a real send even if DRY_RUN happens to be set too.
+    monkeypatch.setattr(main.config, "SEND_TEST_EMAIL", True)
+    monkeypatch.setattr(main.config, "DRY_RUN", True)
+    _install_fake_scraper(monkeypatch, {})
+    send_calls = _install_fake_notifier(monkeypatch)
+
+    main.main(today=TERM_TIME_DAY)
+
+    assert send_calls[0]["dry_run"] is False
+
+
+def test_send_test_email_notifier_failure_returns_1(monkeypatch):
+    monkeypatch.setattr(main.config, "SEND_TEST_EMAIL", True)
+    _install_fake_scraper(monkeypatch, {})
+    _install_fake_notifier(monkeypatch, raise_exc=notifier.NotifierError("resend down"))
+
+    result = main.main(today=TERM_TIME_DAY)
+
+    assert result == 1
+
+
+# ---------------------------------------------------------------------------
+# Price history CSV log
+# ---------------------------------------------------------------------------
+
+
+def test_successful_date_appends_to_price_log(monkeypatch, _isolated_price_log):
+    travel_date = date(2026, 9, 8)
+    raw = _raw(_journey(travel_date, "07:25", "08:26", Decimal("8.70")))
+    _install_fake_scraper(monkeypatch, {travel_date: raw})
+    _install_fake_notifier(monkeypatch)  # avoid a real network call to Resend
+    monkeypatch.setattr(main.config, "MAX_DATES", 1)
+
+    main.main(today=TERM_TIME_DAY)
+
+    assert _isolated_price_log.exists()
+    content = _isolated_price_log.read_text(encoding="utf-8")
+    assert "2026-09-08" in content
+    # Decimal division normalises Decimal("870")/100 to "8.7", not "8.70"
+    # — a representation detail, not a rendering bug (see src/notifier.py
+    # for where the £X.XX formatting actually happens).
+    assert "8.7" in content
+
+
+def test_failed_date_does_not_append_to_price_log(monkeypatch, _isolated_price_log):
+    travel_date = date(2026, 9, 8)
+    _install_fake_scraper(monkeypatch, {travel_date: scraper.ScraperError("boom")})
+    monkeypatch.setattr(main.config, "MAX_DATES", 1)
+
+    main.main(today=TERM_TIME_DAY)
+
+    assert not _isolated_price_log.exists()

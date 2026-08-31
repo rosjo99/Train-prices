@@ -1,0 +1,101 @@
+name: Train price check
+
+# Runs the real daily price check. See docs/plans/001-train-price-alert.md
+# Task 7 for the design this implements, in particular "Running at a
+# fixed local time" for why there are two cron lines below.
+
+on:
+  schedule:
+    # GitHub Actions cron is UTC-only and has no concept of BST/GMT, so
+    # this schedules BOTH the BST-time and GMT-time equivalents of 8pm
+    # London every day. src.main's own RUN_HOUR_LONDON gate (see
+    # src/main.py) checks the real Europe/London wall-clock time and
+    # no-ops the one of these two firings that ISN'T actually 8pm there
+    # today — so exactly one of them does real work, correctly across
+    # the DST transition, with no manual cron updates twice a year.
+    - cron: "0 19 * * *" # 20:00 BST (late Mar - late Oct)
+    - cron: "0 20 * * *" # 20:00 GMT (late Oct - late Mar)
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Print the email instead of sending it"
+        type: boolean
+        default: false
+      max_dates:
+        description: "Cap the number of dates checked (debug only, leave blank for no cap)"
+        default: ""
+      send_test_email:
+        description: "Skip scraping entirely and send one real test email, to confirm delivery works"
+        type: boolean
+        default: false
+      skip_time_gate:
+        description: "Run now regardless of the 8pm London check (always on for manual runs unless unchecked)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: train-price-check
+  cancel-in-progress: false
+
+permissions:
+  contents: write # needed to commit price-history.csv back after each run
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Every remaining term-time Tue/Thu/Fri is checked on every run that
+    # passes the time gate (see plan §2.2) — up to ~100 dates early in a
+    # term at an estimated 15-25s/date. 90 minutes gives headroom over
+    # the ~30-45 min estimate; tighten this once real run durations are
+    # observed. A run that no-ops on the time gate, or that only sends a
+    # test email, finishes in well under a minute regardless.
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12", cache: pip }
+      - run: pip install -r requirements.txt
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
+      - run: playwright install --with-deps chromium
+      - name: Run price check
+        env:
+          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
+          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
+          ALERT_EMAIL_FROM: ${{ secrets.ALERT_EMAIL_FROM }}
+          MAX_DATES: ${{ inputs.max_dates || '' }}
+          DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
+          SEND_TEST_EMAIL: ${{ inputs.send_test_email && '1' || '' }}
+          # Scheduled (cron) runs must never skip the gate — that's the
+          # whole point of the dual-cron-line design above. Only a
+          # manual workflow_dispatch run can set this, and only because
+          # its own input defaults to true (a manual run is for testing
+          # right now, not for waiting until 8pm).
+          SKIP_TIME_GATE: ${{ github.event_name == 'workflow_dispatch' && inputs.skip_time_gate && '1' || '' }}
+        run: python -m src.main
+      - name: Commit updated price history
+        if: always()
+        run: |
+          if [ -n "$(git status --porcelain price-history.csv 2>/dev/null)" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add price-history.csv
+            git commit -m "Record prices checked on $(date -u +%Y-%m-%d)"
+            # Rebase onto the latest remote tip first in case the
+            # booked-dates site (or another run) committed in the
+            # meantime, then push — retries once on a race.
+            git pull --rebase origin "${GITHUB_REF_NAME}" || true
+            git push origin "HEAD:${GITHUB_REF_NAME}"
+          else
+            echo "price-history.csv unchanged (no dates were successfully checked this run) — nothing to commit"
+          fi
+      - name: Upload debug artifacts
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: debug-${{ github.run_id }}
+          path: artifacts/
+          retention-days: 7
+          if-no-files-found: ignore

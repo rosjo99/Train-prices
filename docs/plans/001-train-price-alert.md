@@ -916,121 +916,202 @@ monkeypatching `datetime`)
 
 ### Task 7 — GitHub Actions workflow and documentation
 
-**Create:** `.github/workflows/price-check.yml`, `README.md`
-**Modify:** `CLAUDE.md` only if a decision genuinely changed during
-implementation (report to the planner first).
+**Status: implemented, revised beyond the original spec per explicit
+user request** (run at a fixed local time rather than a fixed UTC cron,
+and a real end-to-end test-email path) — see below for what changed and
+why. Task 8 covers two further additions from that same request (the
+price-history CSV and the booked-dates website) kept separate since
+they're substantial enough to warrant their own task record.
 
-**Workflow**
+**Created:** `.github/workflows/price-check.yml`,
+`.github/workflows/test.yml`, `README.md`
 
-```yaml
-name: Train price check
-on:
-  schedule:
-    - cron: "0 7 * * *"        # 07:00 UTC daily; 08:00 London during BST
-  workflow_dispatch:
-    inputs:
-      dry_run:
-        description: "Print the email instead of sending it"
-        type: boolean
-        default: false
-      max_dates:
-        description: "Cap the number of dates checked (debug only, leave blank for no cap)"
-        default: ""
-concurrency:
-  group: train-price-check
-  cancel-in-progress: false
-permissions:
-  contents: read
-jobs:
-  check:
-    runs-on: ubuntu-latest
-    # Every remaining term-time Tue/Thu/Fri is checked on every run (see
-    # plan §2.2) — up to ~100 dates early in a term at an estimated
-    # 15-25s/date. 90 minutes gives headroom over the ~30-45 min estimate;
-    # tighten this once real run durations are observed.
-    timeout-minutes: 90
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with: { python-version: "3.12", cache: pip }
-      - run: pip install -r requirements.txt
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
-      - run: playwright install --with-deps chromium
-      - name: Run price check
-        env:
-          RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
-          ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
-          ALERT_EMAIL_FROM: ${{ secrets.ALERT_EMAIL_FROM }}
-          MAX_DATES: ${{ inputs.max_dates || '' }}
-          DRY_RUN: ${{ inputs.dry_run && '1' || '' }}
-        run: python -m src.main
-      - name: Upload debug artifacts
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: debug-${{ github.run_id }}
-          path: artifacts/
-          retention-days: 7
-          if-no-files-found: ignore
-```
+#### Running at a fixed local time, not a fixed UTC cron
 
-Add a second job (or a separate workflow) running `pytest` on push and
-pull_request — no secrets, no Playwright browsers needed.
+The original spec above used a single `cron: "0 7 * * *"` (accepting
+that London-local time would drift by an hour across the BST/GMT
+boundary). The user's actual request was 8pm **British time**, not 8pm
+UTC or 7pm/9pm depending on season — GitHub Actions cron can't express
+a timezone-aware schedule directly, so the implemented design instead:
 
-**README.md** must cover:
-- What the tool does, in three sentences.
-- **How to mark a date as already booked** (no coding involved): open
-  `booked-dates.txt` on github.com, click the pencil (edit) icon, add a
-  line `YYYY-MM-DD`, commit directly from the browser. This is the
-  section a non-programmer will read most often — put it first, above
-  the term-dates section, with a screenshot-free step-by-step.
-- **How to update term dates each school year**: edit the `TERMS` block
-  in `src/term_dates.py`, then run `python -m src.term_dates --list` to
-  verify. This is also a section a non-programmer will read — make it
-  explicit and put it near the top.
-- Required repository secrets, with a table: `RESEND_API_KEY`,
-  `ALERT_EMAIL_TO`, `ALERT_EMAIL_FROM` (optional), and the path
-  Settings → Secrets and variables → Actions → New repository secret.
-- Resend setup: create a free account, generate an API key, note that the
-  default `onboarding@resend.dev` sender can only deliver to the Resend
-  account owner's own email address, and that sending anywhere else needs
-  a verified domain.
-- Local run: `pip install -r requirements.txt`,
-  `playwright install chromium`, `DRY_RUN=1 python -m src.main`.
-- **Operational caveats**, verbatim in spirit:
-  - GitHub cron is best-effort and can be delayed by tens of minutes or
-    skipped under load. All day/term gating is in Python, so a late or
-    missed run is harmless.
-  - **GitHub disables scheduled workflows in repositories with no commit
-    activity for 60 days.** Push any commit, or trigger the workflow
-    manually, to re-arm it. Watch for GitHub's warning email.
-  - If runs start failing with `BlockedError` or `HijackedError`, National
-    Rail Enquiries' page behaviour has changed (it has no bot protection
-    as of this writing — see §1.4) or a third-party ad script is
-    redirecting the tab; check the debug artifacts first, since this is
-    unexpected rather than a known, mitigated risk.
-- How failures are surfaced: the job exits non-zero, GitHub emails the
-  repository owner on scheduled-workflow failure, and debug artifacts
-  (screenshot + page HTML) are attached to the failed run for 7 days.
+- Schedules **two** cron lines, `0 19 * * *` and `0 20 * * *` (19:00 and
+  20:00 UTC — the two times that are ever 8pm somewhere across the DST
+  year).
+- Adds `config.RUN_HOUR_LONDON = 20` and a gate at the top of
+  `src/main.py`'s `main()`: if the real `datetime.now(config.LONDON)`
+  hour isn't 20, log and return 0 immediately — no candidates computed,
+  no browser launched. Exactly one of the two daily firings ever passes
+  this check on any given day, automatically correct across the March/
+  October clock change with zero manual cron maintenance.
+- `main(today=None, now=None)` — `now` was added as its own parameter
+  (distinct from `today`) specifically so tests can freeze the gate's
+  clock independently of the date-computation clock.
+- A manual `workflow_dispatch` run sets `SKIP_TIME_GATE=1` by default
+  (via its own `skip_time_gate` input, default `true`) so testing isn't
+  itself gated on happening to click "Run workflow" at 8pm. The
+  scheduled cron triggers never set this — env computed as
+  `github.event_name == 'workflow_dispatch' && inputs.skip_time_gate`.
+
+This is the same principle §1.3/§2.2 already established for weekday/
+term gating (`is_checkable_day`) applied to time-of-day: **all timing
+decisions live in Python, never in the cron expression itself.**
+
+#### A real test-email path
+
+`workflow_dispatch`'s `dry_run` input (as originally specced) only
+prints an email when a real run happens to find a fare under threshold
+— which might not happen for a long time, making it a poor way to
+verify Resend delivery specifically. Added `config.SEND_TEST_EMAIL`
+(env `SEND_TEST_EMAIL`) and `src/main.py`'s `_send_test_email()`: skips
+scraping and `evaluate()` entirely and sends one synthetic `AlertMatch`
+(a fixed £7.77 fare, tomorrow, clearly labelled in its `fare_name`)
+through the real `notifier.send_alert(..., dry_run=False)` — always a
+genuine send, even if `DRY_RUN` also happens to be set, since
+confirming actual delivery is the whole point. Exposed as the
+`send_test_email` workflow_dispatch input.
+
+#### Workflow permissions
+
+`permissions: contents: write` (not `read`, as originally specced) —
+required for the price-history CSV commit-back in Task 8 below. Scoped
+to nothing beyond repo contents.
+
+#### Splitting the test job into its own workflow
+
+Rather than a second job inside `price-check.yml` (as the original spec
+suggested), `pytest` runs in a separate `test.yml` workflow triggered on
+`push`/`pull_request` — it has nothing to do with the cron schedule and
+shouldn't share that workflow's concurrency group or run history.
+
+**README.md** covers everything the original spec asked for (what the
+tool does, marking a date as booked, updating term dates, required
+secrets, Resend setup, local run instructions, operational caveats,
+how failures surface) plus the two Task 8 additions below and the
+`send_test_email`/`skip_time_gate`/`max_dates` manual-run inputs.
 
 **Acceptance criteria**
-- `.github/workflows/price-check.yml` parses as valid YAML
-  (`python -c "import yaml,sys; yaml.safe_load(open('.github/workflows/price-check.yml'))"`).
-- Manual `workflow_dispatch` with `dry_run: true` completes green and
-  prints a rendered email (or "nothing to check", depending on the date)
-  without needing `RESEND_API_KEY`.
-- No secret value appears in any workflow log.
-- The test job passes on a clean checkout.
+- `.github/workflows/price-check.yml`, `test.yml`, and (Task 8's)
+  `deploy-pages.yml` all parse as valid YAML. **Done.**
+- No secret value appears in any workflow log. **Done** — see
+  `src/notifier.py`'s redaction and the fact that `SEND_TEST_EMAIL`'s
+  synthetic fare never touches a real secret path.
+- The test workflow passes on a clean checkout (all 150+ tests).
+  **Done.**
 
 **Edge cases**
 - Secrets absent (e.g. a fork) → the job fails fast with a clear
   `ConfigError` naming the missing variables, not a stack trace deep in
-  the notifier.
+  the notifier — see `src/main.py`'s `_load_secrets_for_run()`.
 - Playwright cache miss → `playwright install` still runs and succeeds.
 - Run overlaps a previous run → `concurrency` prevents it.
+- A scheduled run that's outside the 8pm London hour → clean no-op,
+  covered by `tests/test_main.py`'s `test_wrong_hour_is_a_noop_*`.
+
+---
+
+### Task 8 — Price history log and booked-dates website
+
+**Status: implemented**, per explicit user request after Task 7.
+
+**Created:** `src/price_log.py`, `tests/test_price_log.py`,
+`scripts/export_terms.py`, `site/index.html`, `site/app.js`,
+`site/style.css`, `.github/workflows/deploy-pages.yml`
+**Modified:** `src/main.py` (appends to the log after each successfully
+parsed date), `.gitignore` (`site/terms.json` is generated at deploy
+time, not committed)
+
+This supersedes §5's original deferral of "price history" and "a web
+dashboard" as out-of-scope future work — the user asked for both
+directly, in a much narrower form than a full dashboard (an
+append-only CSV; a single-purpose checkbox page, not a browsable price
+history UI).
+
+#### Price history CSV
+
+`src/price_log.append_price_log(path, checked_at, entries)` appends one
+row per (travel_date, target_departure, option-or-None) to a CSV at
+`config.PRICE_LOG_PATH` (`price-history.csv`, repo root), writing a
+header only if the file doesn't exist yet — **never** truncates or
+rewrites existing rows, so this is a permanent history, not a snapshot.
+Called from `main()` once per successfully-parsed candidate date (not
+called at all for a date that failed to scrape/parse, since there's no
+real data to log). Columns: `checked_at` (UTC timestamp of the check),
+`travel_date`, `target_departure`, `actual_departure`, `arrival_time`,
+`price_gbp`, `railcard_applied`, `sold_out`, `fare_name`.
+
+Persisting this across runs (each a fresh Actions checkout) needs the
+updated file committed back to the repo — `price-check.yml`'s "Commit
+updated price history" step does `git add price-history.csv && git
+commit && git push` (skipped entirely if the file is unchanged, e.g. a
+run where every date failed), with a `git pull --rebase` first in case
+the booked-dates website or another run committed in the meantime.
+
+#### Booked-dates website
+
+A static page (`site/`) published via GitHub Pages, replacing "edit
+`booked-dates.txt` on github.com" as the primary workflow for someone
+not used to GitHub — see the chosen design's tradeoffs in this
+project's chat history: GitHub Pages can only serve static files (no
+server-side code), so the page calls the **GitHub Contents API
+directly from the visitor's own browser**, authenticated with a
+fine-grained personal access token (repo-scoped, Contents:
+read-and-write only) that the visitor generates themselves and pastes
+into the page once — stored only in that browser's `localStorage`,
+never sent anywhere but `api.github.com`. No backend server exists or
+is needed.
+
+- `scripts/export_terms.py` exports `src.term_dates.TERMS` (+
+  `CHECK_WEEKDAYS`, `LAST_KNOWN_DATE`) as JSON, run fresh by
+  `deploy-pages.yml` before every deploy — the site's "which dates are
+  checkable" logic is a direct JS port of `term_dates.py`'s
+  `is_checkable_day()`/`checkable_dates()` (operating on ISO date
+  *strings*, which compare correctly lexicographically, sidestepping JS
+  `Date`'s local-timezone footguns entirely), computed against the
+  visitor's own current date rather than a value baked in at export
+  time. Verified byte-for-byte identical to the real Python output
+  across all 102 dates from 2026-09-01 (see this project's chat
+  history for the cross-check).
+- Ticking a checkbox re-fetches the current file (fresh `sha`, to avoid
+  clobbering a concurrent edit from another device), adds/removes that
+  one date, and `PUT`s the result back, preserving `booked-dates.txt`'s
+  original leading comment block.
+- `.github/workflows/deploy-pages.yml` publishes `site/` via
+  `actions/upload-pages-artifact` + `actions/deploy-pages` on push to
+  `main` (paths: `site/**`, `src/term_dates.py`,
+  `scripts/export_terms.py`) or `workflow_dispatch`. Requires a one-time
+  Settings → Pages → Source → "GitHub Actions" toggle (see README.md) —
+  no available tool could do this on the user's behalf, so it's
+  documented as a manual step.
+- `OWNER`/`REPO`/`BRANCH` are constants at the top of `site/app.js`,
+  hardcoded to `rosjo99`/`Train-prices`/`main` — this only actually
+  controls the same `booked-dates.txt` the scheduled job reads once
+  this branch is merged to `main`.
+
+**Acceptance criteria**
+- `append_price_log` never truncates existing rows; writes a header
+  once; handles a `None` option (target departure absent from results)
+  without crashing. Covered by `tests/test_price_log.py` (7 tests).
+- `main()` calls the price log only for dates that were successfully
+  scraped and parsed, never for a failed date. Covered by
+  `tests/test_main.py`'s price-log tests.
+- The JS port of `checkable_dates()` matches the real Python output
+  exactly (spot-checked directly, not just by test count).
+- `deploy-pages.yml` and the site's HTML/CSS/JS all parse/lint cleanly
+  (`node --check site/app.js`).
+
+**Edge cases**
+- A date with no matching target departure at all (`option is None`) is
+  still logged, with blank price/departure fields — "this train
+  disappeared from the timetable" is itself worth a historical record.
+- Two near-simultaneous booked-dates edits (e.g. the website and a
+  direct file edit) → the website always re-fetches the current `sha`
+  immediately before writing, so the GitHub API itself rejects a stale
+  write with a 409 rather than silently losing an edit; the page
+  surfaces this as a "could not save" message rather than a silent
+  failure.
+- The price-history commit racing the *next* scheduled run's own commit
+  → `git pull --rebase` before push in the workflow step, matching the
+  same race-handling already used for the booked-dates website.
 
 ---
 
@@ -1039,13 +1120,19 @@ pull_request — no secrets, no Playwright browsers needed.
 Do not implement these without a new plan:
 
 - **Duplicate-alert suppression.** If a fare sits below £10 for a week
-  you get an email every day. The obvious fix is a small state file
-  committed back to the repo or cached via `actions/cache`, keyed on
-  (travel date, departure time, price bucket). Deferred — it adds write
-  permissions and state management for a comfort problem.
+  you get an email every day. The obvious fix is a small state file (or
+  simply deriving "already alerted" from `price-history.csv`, now that
+  Task 8 added it) keyed on (travel date, departure time, price bucket).
+  Still deferred — Task 8 removed the original "adds write permissions"
+  objection, but this is state-management complexity for a comfort
+  problem nobody has asked for yet.
 - Return legs, other routes, other railcards, other thresholds.
 - Split-ticketing or comparison against other retailers.
-- A web dashboard or price history.
+- ~~A web dashboard or price history~~ — **implemented in narrower
+  form by Task 8**: an append-only CSV log (not a browsable dashboard)
+  and a single-purpose booked-dates checkbox page (not a general price
+  history UI). A full browsable dashboard over `price-history.csv`
+  remains out of scope.
 
 ## 6. Review checklist (for the reviewer agent, after implementation)
 

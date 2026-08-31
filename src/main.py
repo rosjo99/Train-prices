@@ -12,10 +12,11 @@ import logging
 import random
 import sys
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from pathlib import Path
 
-from src import booked_dates, config, notifier, parser, scraper, term_dates
+from src import booked_dates, config, notifier, parser, price_log, scraper, term_dates
 from src.models import AlertMatch, TrainOption
 
 logger = logging.getLogger(__name__)
@@ -117,6 +118,36 @@ def evaluate(
     return matches, railcard_unconfirmed
 
 
+def _send_test_email() -> int:
+    """SEND_TEST_EMAIL path: send one synthetic alert through the real
+    notifier, no scraping at all, to positively confirm email delivery
+    works. Always a real send (never dry-run) regardless of config.DRY_RUN
+    — the whole point is confirming Resend actually delivers.
+    """
+    logger.info("SEND_TEST_EMAIL set — sending a single synthetic test alert, no scraping")
+    secrets = config.get_secrets()
+    travel_date = datetime.now(config.LONDON).date() + timedelta(days=1)
+    test_option = TrainOption(
+        travel_date=travel_date,
+        departure_time="07:25",
+        arrival_time="08:26",
+        price=Decimal("7.77"),
+        currency="GBP",
+        railcard_applied=True,
+        is_direct=True,
+        sold_out=False,
+        fare_name="TEST EMAIL — not a real fare, please ignore",
+    )
+    match = AlertMatch(travel_date=travel_date, option=test_option, threshold=config.PRICE_THRESHOLD)
+    try:
+        notifier.send_alert([match], secrets, dry_run=False)
+    except notifier.NotifierError as exc:
+        logger.error("test email failed to send: %s", exc)
+        return 1
+    logger.info("test email sent to %s — check the inbox", secrets.email_to)
+    return 0
+
+
 def _log_target_summary(travel_date: date, targets: dict[str, TrainOption | None]) -> None:
     for departure_time, option in targets.items():
         if option is None:
@@ -127,11 +158,32 @@ def _log_target_summary(travel_date: date, targets: dict[str, TrainOption | None
             logger.info("[%s] %s: %s", travel_date.isoformat(), departure_time, option.price)
 
 
-def main(today: date | None = None) -> int:
+def main(today: date | None = None, now: datetime | None = None) -> int:
+    """`now` is the current Europe/London-aware instant, used only for
+    RUN_HOUR_LONDON's time-of-day gate — kept separate from `today` (a
+    plain date) so tests can freeze one without the other. Both default
+    to the real clock.
+    """
     _ensure_logging_configured()
 
+    if now is None:
+        now = datetime.now(config.LONDON)
     if today is None:
-        today = datetime.now(config.LONDON).date()
+        today = now.date()
+
+    if config.SEND_TEST_EMAIL:
+        return _send_test_email()
+
+    if not config.SKIP_TIME_GATE and now.astimezone(config.LONDON).hour != config.RUN_HOUR_LONDON:
+        logger.info(
+            "current Europe/London time is %s, not %02d:xx — this cron "
+            "slot isn't real 8pm London today (see the dual-cron-line "
+            "design in docs/plans/001-train-price-alert.md Task 7), "
+            "no-op",
+            now.astimezone(config.LONDON).strftime("%H:%M"),
+            config.RUN_HOUR_LONDON,
+        )
+        return 0
 
     all_candidates = term_dates.checkable_dates(today + timedelta(days=1), term_dates.LAST_KNOWN_DATE)
     booked = booked_dates.load_booked_dates(config.BOOKED_DATES_PATH)
@@ -189,6 +241,12 @@ def main(today: date | None = None) -> int:
         targets = parser.select_target_trains(options, config.TARGET_DEPARTURES)
         _log_target_summary(travel_date, targets)
         results[travel_date] = targets
+
+        price_log.append_price_log(
+            config.PRICE_LOG_PATH,
+            datetime.now(timezone.utc),
+            [(travel_date, departure_time, option) for departure_time, option in targets.items()],
+        )
 
     if not results:
         logger.error("all %d candidate date(s) failed — see failures logged above", len(candidates))

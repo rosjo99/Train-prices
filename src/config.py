@@ -115,8 +115,28 @@ LONDON = ZoneInfo("Europe/London")
 # --- Booked dates ------------------------------------------------------
 
 # Committed file at a fixed repo-relative path, read by a later task's
-# booked_dates.load_booked_dates(). Not env-configurable.
+# booked_dates.load_booked_dates(). Not env-configurable. Can also be
+# edited via the GitHub Pages site in site/ — see README.md.
 BOOKED_DATES_PATH = Path("booked-dates.txt")
+
+# --- Price history log ---------------------------------------------------
+
+# Committed, append-only CSV of every price ever checked (see
+# src/price_log.py) — never overwritten, so this is a running history,
+# not a snapshot. The workflow commits this file back to the repo after
+# each run (see .github/workflows/price-check.yml).
+PRICE_LOG_PATH = Path("price-history.csv")
+
+# --- Scheduling ------------------------------------------------------
+
+# GitHub Actions cron is UTC-only and doesn't know about BST/GMT, so the
+# workflow schedules two cron lines (one for each) and this is the
+# Python-side gate that makes only the one that's actually 8pm in
+# Europe/London right now do real work — the same "all timing/gating
+# logic lives in Python, never in the cron expression" principle already
+# used for weekday/term gating. See docs/plans/001-train-price-alert.md
+# Task 7's "Running at a fixed local time" section.
+RUN_HOUR_LONDON = 20
 
 
 def _read_max_dates() -> int | None:
@@ -136,8 +156,8 @@ def _read_max_dates() -> int | None:
     return value
 
 
-def _read_dry_run() -> bool:
-    raw = os.environ.get("DRY_RUN", "").strip().lower()
+def _read_bool_env(name: str) -> bool:
+    raw = os.environ.get(name, "").strip().lower()
     return raw in ("1", "true", "yes")
 
 
@@ -145,7 +165,20 @@ def _read_dry_run() -> bool:
 # the scheduled cron run.
 MAX_DATES: int | None = _read_max_dates()
 
-DRY_RUN: bool = _read_dry_run()
+DRY_RUN: bool = _read_bool_env("DRY_RUN")
+
+# Set by workflow_dispatch's manual "run now" path so a test run isn't
+# silently no-op'd by RUN_HOUR_LONDON just because it wasn't triggered at
+# 8pm. Never set by the scheduled cron run — that's the whole point of
+# the two-cron-lines-plus-gate design.
+SKIP_TIME_GATE: bool = _read_bool_env("SKIP_TIME_GATE")
+
+# Set by workflow_dispatch's "send a test email" input. Sends one
+# synthetic alert through the real notifier (bypassing scraping
+# entirely) to positively confirm email delivery works, since a real run
+# might go for a long time without ever finding a fare under threshold
+# to naturally trigger one.
+SEND_TEST_EMAIL: bool = _read_bool_env("SEND_TEST_EMAIL")
 
 
 @dataclass(frozen=True)
