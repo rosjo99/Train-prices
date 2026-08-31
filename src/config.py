@@ -48,6 +48,26 @@ RAILCARD_CODE = "YNG"
 # out of the 16-25 window.
 PASSENGER_DOB = "2003-01-01"
 
+# UNVERIFIED HYPOTHESIS (Task 3) — pending live confirmation against the
+# real site. This is the plan's best guess at the deep-linked results-page
+# URL shape (see docs/plans/001-train-price-alert.md Task 3), written as a
+# format string against ORIGIN_URN/DESTINATION_URN/RAILCARD_CODE/
+# PASSENGER_DOB above. It will not render successfully until ORIGIN_URN and
+# DESTINATION_URN are filled in by a real discovery run (interactively
+# driving thetrainline.com's search form) — that discovery could not be
+# done in this environment (no outbound network access to the live site)
+# and is deferred to a follow-up commit once it's been confirmed live.
+# Do not rely on this template for anything beyond a starting point until
+# that confirmation lands and this comment is updated with the date it was
+# verified.
+RESULTS_URL_TEMPLATE = (
+    "https://www.thetrainline.com/book/results"
+    "?origin={origin_urn}&destination={destination_urn}"
+    "&outwardDate={outward_date}&outwardDateType=departAfter"
+    "&journeySearchType=single&passengers[]={passenger_dob}"
+    "&railcards[]={railcard_code}%7C1&selectedTab=train"
+)
+
 # --- Time ------------------------------------------------------------
 
 LONDON = ZoneInfo("Europe/London")
