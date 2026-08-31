@@ -73,26 +73,39 @@ def main() -> int:
     )
 
     def _route_handler(route):
-        request = route.request
-        frame = request.frame
-        is_subframe_doc = (
-            request.resource_type == "document"
-            and frame is not None
-            and frame.parent_frame is not None
-        )
-        if is_subframe_doc and any(kw in request.url for kw in AD_IFRAME_HOST_KEYWORDS):
-            print(f"blocked ad iframe: {request.url}", flush=True)
-            route.abort()
-            return
+        # A route handler must never raise — an unhandled exception here
+        # (e.g. from a Service Worker request, which has no associated
+        # frame and raises on `request.frame` access rather than returning
+        # None) crashes request handling for the whole browser session, not
+        # just this one request. Always fall through to route.continue_()
+        # on anything unexpected.
+        try:
+            request = route.request
+            try:
+                frame = request.frame
+            except Exception:
+                frame = None  # e.g. Service Worker / other frameless requests
 
-        if request.is_navigation_request() and frame is not None and frame.parent_frame is None:
-            from urllib.parse import urlparse
-
-            host = urlparse(request.url).hostname or ""
-            if not host.endswith(NRE_HOST_SUFFIX):
-                print(f"blocked hijack navigation to {request.url} (backstop)", flush=True)
-                route.fulfill(status=200, content_type="text/html", body="<html></html>")
+            is_subframe_doc = (
+                request.resource_type == "document"
+                and frame is not None
+                and frame.parent_frame is not None
+            )
+            if is_subframe_doc and any(kw in request.url for kw in AD_IFRAME_HOST_KEYWORDS):
+                print(f"blocked ad iframe: {request.url}", flush=True)
+                route.abort()
                 return
+
+            if request.is_navigation_request() and frame is not None and frame.parent_frame is None:
+                from urllib.parse import urlparse
+
+                host = urlparse(request.url).hostname or ""
+                if not host.endswith(NRE_HOST_SUFFIX):
+                    print(f"blocked hijack navigation to {request.url} (backstop)", flush=True)
+                    route.fulfill(status=200, content_type="text/html", body="<html></html>")
+                    return
+        except Exception as exc:
+            print(f"route handler error (falling through to continue): {exc}", flush=True)
         route.continue_()
 
     with sync_playwright() as p:
