@@ -441,22 +441,35 @@ def main() -> int:
         # matches our need), an "Add Railcard" button, and the real submit
         # button #button-jp labeled "Get times and prices" (strong signal
         # NRE shows fares directly, not just timetables).
-        def _select_autocomplete_option(field_label: str) -> None:
+        def _select_autocomplete_option(field_id: str, field_label: str) -> None:
             """Prefer clicking the actual visible autocomplete suggestion
-            with the mouse over blind ArrowDown+Enter — untested but cheap
-            hypothesis: if the redirect trigger is bound to the destination
-            field's Enter keydown specifically (rather than to "a station
-            got selected" generally), a mouse click sidesteps it entirely.
-            Falls back to keyboard if no option element is visible.
+            with the mouse over blind ArrowDown+Enter. Bug found in a
+            previous run: querying `[role='option']` globally grabbed the
+            wrong listbox's option once both origin and destination had
+            active suggestion lists on screen simultaneously (origin ended
+            up as an unresolved "9 stations found" instead of a confirmed
+            selection). Fix: read the input's own `aria-controls` attribute
+            (e.g. "sp-jp-origin-results-list") to scope the option query to
+            THIS field's listbox specifically. Falls back to keyboard if
+            that fails for any reason.
             """
             try:
-                option = page.locator("[role='option']").first
-                if option.count() > 0:
-                    option.click(timeout=3000)
-                    print(f"clicked visible autocomplete option for {field_label}", flush=True)
-                    return
+                list_id = page.locator(f"#{field_id}").get_attribute("aria-controls")
+                if list_id:
+                    option = page.locator(f"#{list_id} [role='option']").first
+                    if option.count() > 0:
+                        option.click(timeout=3000)
+                        print(
+                            f"clicked scoped autocomplete option for {field_label} "
+                            f"(listbox #{list_id})",
+                            flush=True,
+                        )
+                        return
+                    print(f"no options found in listbox #{list_id} for {field_label}", flush=True)
+                else:
+                    print(f"{field_id} has no aria-controls attribute yet", flush=True)
             except Exception as exc:
-                print(f"clicking autocomplete option for {field_label} failed: {exc}", flush=True)
+                print(f"clicking scoped autocomplete option for {field_label} failed: {exc}", flush=True)
             page.keyboard.press("ArrowDown")
             page.keyboard.press("Enter")
             print(f"fell back to ArrowDown+Enter for {field_label}", flush=True)
@@ -465,17 +478,23 @@ def main() -> int:
             origin_input = page.locator("#jp-origin")
             origin_input.fill("Oxford", timeout=8000)
             page.wait_for_timeout(1200)
-            _select_autocomplete_option("origin")
+            _select_autocomplete_option("jp-origin", "origin")
             page.wait_for_timeout(500)
 
             dest_input = page.locator("#jp-destination")
             dest_input.fill("London Paddington", timeout=8000)
             page.wait_for_timeout(1200)
-            _select_autocomplete_option("destination")
+            _select_autocomplete_option("jp-destination", "destination")
             page.wait_for_timeout(500)
 
             filled = True
             print("filled #jp-origin and #jp-destination", flush=True)
+            for fid in ("jp-origin", "jp-destination"):
+                try:
+                    val = page.locator(f"#{fid}").input_value()
+                    print(f"confirmed value of #{fid}: {val!r}", flush=True)
+                except Exception as exc:
+                    print(f"reading value of #{fid} failed: {exc}", flush=True)
         except Exception as exc:
             print(f"filling #jp-origin/#jp-destination failed: {exc}", flush=True)
 
