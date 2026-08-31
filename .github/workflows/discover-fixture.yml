@@ -21,6 +21,7 @@ on:
       - ".github/workflows/discover-fixture.yml"
       - "scripts/capture_fixture.py"
       - "scripts/probe_nre.py"
+      - "scripts/probe_nre_deeplink.py"
       - "src/scraper.py"
       - "src/config.py"
   workflow_dispatch:
@@ -111,5 +112,40 @@ jobs:
         with:
           name: nre-probe-${{ github.run_id }}
           path: /tmp/nre_probe/
+          retention-days: 7
+          if-no-files-found: ignore
+
+  probe-nre-deeplink:
+    # Tests whether NRE's /journey-planner/?origin=...&destination=...
+    # &leavingDate=...&railcards=...  URL format (found by the user in a
+    # real example search) pre-fills — or even auto-submits — the
+    # journey search, sidestepping every UI-interaction bug hit in the
+    # probe-nre job above (decoy click, autocomplete listbox scoping, a
+    # React-controlled checkbox/date-button that don't visually update
+    # from a raw click).
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: playwright install --with-deps chromium
+      - name: Probe NRE deep-link URL
+        run: |
+          python scripts/probe_nre_deeplink.py --out /tmp/nre_deeplink
+      - name: Print captured responses
+        if: always()
+        run: |
+          echo "=== captured_responses.json ==="
+          cat /tmp/nre_deeplink/captured_responses.json 2>/dev/null || echo "(none)"
+      - name: Upload probe artifacts (screenshots etc.)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nre-deeplink-probe-${{ github.run_id }}
+          path: /tmp/nre_deeplink/
           retention-days: 7
           if-no-files-found: ignore
