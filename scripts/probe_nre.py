@@ -45,34 +45,54 @@ def main() -> int:
                 entry["body"] = "(unreadable)"
         captured_responses.append(entry)
 
-    # A previous probe run got hijacked mid-flow into a Booking.com hotel
-    # search — NRE's page loads third-party ad/affiliate scripts and one of
-    # them fired an uncontrolled top-level redirect away from the site.
-    # Blocking those ad domains outright (tried next) turned out to be too
-    # broad: the page's own click handler apparently depends on one of those
-    # sub-resource requests completing before it opens the search modal, so
-    # blocking them broke the modal entirely (#jp-origin never appeared).
-    # The narrower, correct fix: only ever block a *main-frame navigation*
-    # (a full page redirect) away from nationalrail.co.uk. Ad/analytics
-    # sub-resources (scripts, XHRs, iframes) still load normally — we just
-    # never let one of them carry the whole page somewhere else. This has
-    # nothing to do with NRE's own bot protection (block markers came back
-    # "none"/benign on every run); it's purely "don't let an ad hijack the
-    # tab", the same thing a pop-up blocker does.
+    # NRE's page loads third-party ad networks that fire an uncontrolled
+    # top-level redirect (observed: Booking.com hotel search) part-way
+    # through the flow. Two things learned the hard way:
+    # 1. Blocking ad domains outright breaks the page's own click handler
+    #    (it depends on one of those sub-resource requests completing
+    #    before it opens the search modal) — so sub-resources must load.
+    # 2. Aborting an in-progress *main-frame* navigation leaves the tab on
+    #    Chrome's own network-error page (chrome-error://chromewebdata/),
+    #    not back on the original page — worse than the hijack itself.
+    # The actual fix: block the ad IFRAME's document load itself (a
+    # sub-frame, not the main frame) from known ad hosts, so its creative
+    # never executes and never gets the chance to redirect the top frame in
+    # the first place. The main-frame guard below is kept only as a last-
+    # resort backstop using fulfill() (a harmless blank page) instead of
+    # abort(), so even an unanticipated redirect source doesn't blank the
+    # tab with a browser error. None of this relates to NRE's own bot
+    # protection (block markers came back "none"/benign on every run) —
+    # it's purely "don't let an ad hijack the tab", same as a pop-up
+    # blocker.
     NRE_HOST_SUFFIX = "nationalrail.co.uk"
+    AD_IFRAME_HOST_KEYWORDS = (
+        "doubleclick.net", "googlesyndication.com", "openx.net",
+        "booking.com", "adnxs.com", "taboola.com", "outbrain.com",
+        "criteo.com", "amazon-adsystem.com", "pubmatic.com",
+        "rubiconproject.com", "casalemedia.com", "adsrvr.org",
+    )
 
     def _route_handler(route):
         request = route.request
-        if request.is_navigation_request():
-            frame = request.frame
-            if frame is not None and frame.parent_frame is None:
-                from urllib.parse import urlparse
+        frame = request.frame
+        is_subframe_doc = (
+            request.resource_type == "document"
+            and frame is not None
+            and frame.parent_frame is not None
+        )
+        if is_subframe_doc and any(kw in request.url for kw in AD_IFRAME_HOST_KEYWORDS):
+            print(f"blocked ad iframe: {request.url}", flush=True)
+            route.abort()
+            return
 
-                host = urlparse(request.url).hostname or ""
-                if not host.endswith(NRE_HOST_SUFFIX):
-                    print(f"blocked hijack navigation to {request.url}", flush=True)
-                    route.abort()
-                    return
+        if request.is_navigation_request() and frame is not None and frame.parent_frame is None:
+            from urllib.parse import urlparse
+
+            host = urlparse(request.url).hostname or ""
+            if not host.endswith(NRE_HOST_SUFFIX):
+                print(f"blocked hijack navigation to {request.url} (backstop)", flush=True)
+                route.fulfill(status=200, content_type="text/html", body="<html></html>")
+                return
         route.continue_()
 
     with sync_playwright() as p:
