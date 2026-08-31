@@ -9,6 +9,19 @@ name: Discover fixture (manual dev tool)
 # only fetches public train prices.
 
 on:
+  # workflow_dispatch alone won't work until this file exists on the
+  # default branch (GitHub only indexes workflow_dispatch workflows from
+  # the default branch), which this project hasn't merged to yet. Trigger
+  # on push to this branch instead, scoped to files that would actually
+  # change discovery output, so it doesn't fire on unrelated commits.
+  push:
+    branches:
+      - claude/train-price-alert-setup-ks7rfg
+    paths:
+      - ".github/workflows/discover-fixture.yml"
+      - "scripts/capture_fixture.py"
+      - "src/scraper.py"
+      - "src/config.py"
   workflow_dispatch:
     inputs:
       date:
@@ -31,7 +44,7 @@ jobs:
       - name: Capture fixture
         run: |
           python scripts/capture_fixture.py \
-            --date "${{ inputs.date }}" \
+            --date "${{ inputs.date || '2026-09-08' }}" \
             --out /tmp/fixture.json \
             --artifacts-dir /tmp/artifacts
       - name: Print captured fixture
