@@ -1357,6 +1357,31 @@ checkbox updates that row's highlight immediately (via the `rowEl`/
 `isCheap` values `toggleDate()` already has in scope from render time),
 rather than waiting for the next full page load.
 
+#### Bug fix: a save could 409 and require a manual retry
+
+A live click on the booked-dates site hit `GitHub API error 409 saving
+the file: booked-dates.txt does not match <sha>` — the exact conflict
+this design already anticipated (see this task's "Two near-simultaneous
+booked-dates edits" edge case above), but the site only ever surfaced it
+as an error for the user to notice and retry by hand, rather than
+retrying itself. Root-caused to `githubGetFile()`'s fetch missing
+`cache: "no-store"` (unlike `fetchRawFile()`, which already has it) —
+without it, the browser can serve a cached response for that
+authenticated GET and hand back a stale `sha`, so the subsequent write
+is rejected even when nothing else has touched the file recently.
+Confirmed no GitHub Actions workflow in this repo can be the cause
+either way: `price-check.yml` only ever `git add price-history.csv`,
+never `booked-dates.txt`, and `deploy-pages.yml` never commits to the
+repo at all.
+
+Fixed two ways: `githubGetFile()` now sets `cache: "no-store"`, and
+`toggleDate()` wraps its read-modify-write cycle in a retry loop (up to
+3 attempts) that specifically catches a 409 from `githubPutFile()`
+(which now attaches `err.status` so this is detectable) and re-fetches
+the current content before retrying, rather than surfacing the first
+conflict as a failure. Any other status still fails immediately, as
+before.
+
 ---
 
 ## 5. Out of scope / future work
