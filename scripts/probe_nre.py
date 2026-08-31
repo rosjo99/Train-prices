@@ -503,6 +503,14 @@ def main() -> int:
         _try_uncheck_find_hotels("after-fill")
 
         # Railcard selection (per user request: 16-25 Railcard specifically).
+        # A previous run's element dump revealed the real structure once the
+        # panel is open: #railcard-0 (a <label for="railcard-0">Choose 1st
+        # railcard</label> pairing — a native <select>) for the railcard
+        # TYPE, and a separate #railcard-0-count for the QUANTITY — the user
+        # confirmed via the screenshots that both need to be set explicitly.
+        # The earlier text-matching click approach never found a "16-25"
+        # element because it's <option> text inside a closed <select>, not
+        # visible/clickable DOM content.
         try:
             add_railcard_btn = page.locator("button[aria-label='Add railcard']")
             if add_railcard_btn.count() > 0:
@@ -512,49 +520,43 @@ def main() -> int:
                 page.screenshot(path=str(args.out / "03a_railcard_panel.png"))
                 (args.out / "03a_railcard_panel.html").write_text(page.content(), encoding="utf-8")
                 elements = page.eval_on_selector_all(
-                    "input, button, [role='option'], label",
+                    "input, button, select, [role='option'], label",
                     "els => els.map(e => e.outerHTML.slice(0, 300))",
                 )
                 print(f"--- {len(elements)} elements after clicking Add Railcard ---", flush=True)
                 for html in elements:
                     print("  RAILCARD_ELEM:", html, flush=True)
 
-                selected = False
-                for sel in (
-                    "text=16-25 Railcard",
-                    "label:has-text('16-25')",
-                    "button:has-text('16-25')",
-                    "[role='option']:has-text('16-25')",
-                    "text=16-25",
-                ):
+                railcard_select = page.locator("#railcard-0")
+                if railcard_select.count() > 0:
                     try:
-                        opt = page.locator(sel)
-                        if opt.count() > 0:
-                            opt.first.click(timeout=5000)
-                            print(f"selected 16-25 railcard via {sel!r}", flush=True)
-                            selected = True
-                            page.wait_for_timeout(500)
-                            break
-                    except Exception:
-                        continue
-                if not selected:
-                    print("could not find a 16-25 railcard option to click", flush=True)
+                        railcard_select.select_option(label="16-25 Railcard")
+                        print("selected 16-25 Railcard via #railcard-0 select_option", flush=True)
+                    except Exception as exc:
+                        print(f"select_option on #railcard-0 failed: {exc}", flush=True)
+                        # Fall back to a plain click-based approach in case
+                        # this isn't actually a native <select>.
+                        for sel in ("text=16-25 Railcard", "text=16-25"):
+                            try:
+                                opt = page.locator(sel)
+                                if opt.count() > 0:
+                                    opt.first.click(timeout=3000)
+                                    print(f"selected 16-25 railcard via fallback {sel!r}", flush=True)
+                                    break
+                            except Exception:
+                                continue
+                else:
+                    print("#railcard-0 not found", flush=True)
 
-                # Look for a confirm/apply/done button to close the panel.
-                for sel in (
-                    "button:has-text('Apply')",
-                    "button:has-text('Done')",
-                    "button:has-text('Add')",
-                    "button:has-text('Confirm')",
-                ):
+                count_select = page.locator("#railcard-0-count")
+                if count_select.count() > 0:
                     try:
-                        btn = page.locator(sel)
-                        if btn.count() > 0:
-                            btn.first.click(timeout=3000)
-                            print(f"confirmed railcard panel via {sel!r}", flush=True)
-                            break
-                    except Exception:
-                        continue
+                        count_select.select_option("1")
+                        print("selected quantity 1 via #railcard-0-count select_option", flush=True)
+                    except Exception as exc:
+                        print(f"select_option on #railcard-0-count failed: {exc}", flush=True)
+                else:
+                    print("#railcard-0-count not found", flush=True)
 
                 page.wait_for_timeout(500)
                 page.screenshot(path=str(args.out / "03b_after_railcard_select.png"))
@@ -563,6 +565,14 @@ def main() -> int:
                 print("Add Railcard button not found", flush=True)
         except Exception as exc:
             print(f"railcard flow failed: {exc}", flush=True)
+
+        # Confirmed via the DOM dump: after clicking Add Railcard, the
+        # find_hotels checkbox was STILL checked="" despite two earlier
+        # uncheck passes (both of which ran BEFORE the railcard panel
+        # opened) — the panel expanding evidently re-renders or re-checks
+        # it. A third pass here, after the railcard flow, right before
+        # submit, is needed to actually catch it in its final state.
+        _try_uncheck_find_hotels("after-railcard")
 
         page.screenshot(path=str(args.out / "04_after_fill.png"))
         (args.out / "04_after_fill.html").write_text(page.content(), encoding="utf-8")
