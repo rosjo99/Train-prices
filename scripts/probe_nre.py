@@ -45,29 +45,35 @@ def main() -> int:
                 entry["body"] = "(unreadable)"
         captured_responses.append(entry)
 
-    # The previous probe run got hijacked mid-flow into a Booking.com hotel
-    # search — NRE's page loads third-party ad/affiliate scripts (DoubleClick,
-    # OpenX, a "RAMP" ad-management script from intergient.com, a
-    # pre-checked "Find hotels" affiliate widget) and one of them fired an
-    # uncontrolled top-level redirect away from the site entirely. Blocking
-    # known ad/tracking domains outright avoids this — this has nothing to
-    # do with NRE's own bot protection (which never triggered: block markers
-    # came back "none" on every run) and everything to do with not letting
-    # unrelated ad scripts hijack the page. Standard, non-deceptive scraper
-    # practice, same as an ad-blocking browser extension.
-    AD_DOMAIN_KEYWORDS = (
-        "doubleclick.net", "googlesyndication.com", "google.com/ccm",
-        "openx.net", "booking.com", "luckyorange.net", "confiant-integrations",
-        "adnxs.com", "taboola.com", "outbrain.com", "criteo.com",
-        "amazon-adsystem.com", "pubmatic.com", "rubiconproject.com",
-        "casalemedia.com", "adsrvr.org", "intergient.com",
-    )
+    # A previous probe run got hijacked mid-flow into a Booking.com hotel
+    # search — NRE's page loads third-party ad/affiliate scripts and one of
+    # them fired an uncontrolled top-level redirect away from the site.
+    # Blocking those ad domains outright (tried next) turned out to be too
+    # broad: the page's own click handler apparently depends on one of those
+    # sub-resource requests completing before it opens the search modal, so
+    # blocking them broke the modal entirely (#jp-origin never appeared).
+    # The narrower, correct fix: only ever block a *main-frame navigation*
+    # (a full page redirect) away from nationalrail.co.uk. Ad/analytics
+    # sub-resources (scripts, XHRs, iframes) still load normally — we just
+    # never let one of them carry the whole page somewhere else. This has
+    # nothing to do with NRE's own bot protection (block markers came back
+    # "none"/benign on every run); it's purely "don't let an ad hijack the
+    # tab", the same thing a pop-up blocker does.
+    NRE_HOST_SUFFIX = "nationalrail.co.uk"
 
     def _route_handler(route):
-        if any(kw in route.request.url for kw in AD_DOMAIN_KEYWORDS):
-            route.abort()
-        else:
-            route.continue_()
+        request = route.request
+        if request.is_navigation_request():
+            frame = request.frame
+            if frame is not None and frame.parent_frame is None:
+                from urllib.parse import urlparse
+
+                host = urlparse(request.url).hostname or ""
+                if not host.endswith(NRE_HOST_SUFFIX):
+                    print(f"blocked hijack navigation to {request.url}", flush=True)
+                    route.abort()
+                    return
+        route.continue_()
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
