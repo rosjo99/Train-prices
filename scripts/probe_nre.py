@@ -65,12 +65,23 @@ def main() -> int:
     # it's purely "don't let an ad hijack the tab", same as a pop-up
     # blocker.
     NRE_HOST_SUFFIX = "nationalrail.co.uk"
+    # Expanded from every ad/tracking domain observed across prior runs'
+    # captured_responses.json — belt-and-suspenders alongside the CSP
+    # injection below, which should make this list largely redundant (CSP
+    # blocks script *execution* outright; this blocks specific iframe
+    # *documents* from loading at all).
     AD_IFRAME_HOST_KEYWORDS = (
         "doubleclick.net", "googlesyndication.com", "openx.net",
         "booking.com", "adnxs.com", "taboola.com", "outbrain.com",
         "criteo.com", "amazon-adsystem.com", "pubmatic.com",
         "rubiconproject.com", "casalemedia.com", "adsrvr.org",
+        "eyeota.net", "launchpad.privacymanager.io", "hadronid.net",
+        "hadron.ad.gt", "agkn.com", "ccgateway.net", "liadm.com",
+        "3lift.com", "gumgum.com", "ad.gt", "scorecardresearch.com",
+        "confiant-integrations.net", "intergient.com", "surveygizmo.eu",
+        "gum.criteo.com", "cdn.hadronid.net",
     )
+    csp_injected_once = False
 
     def _route_handler(route):
         # A route handler must never raise — an unhandled exception here
@@ -79,6 +90,7 @@ def main() -> int:
         # None) crashes request handling for the whole browser session, not
         # just this one request. Always fall through to route.continue_()
         # on anything unexpected.
+        nonlocal csp_injected_once
         try:
             request = route.request
             try:
@@ -96,7 +108,12 @@ def main() -> int:
                 route.abort()
                 return
 
-            if request.is_navigation_request() and frame is not None and frame.parent_frame is None:
+            is_main_frame_nav = (
+                request.is_navigation_request()
+                and frame is not None
+                and frame.parent_frame is None
+            )
+            if is_main_frame_nav:
                 from urllib.parse import urlparse
 
                 host = urlparse(request.url).hostname or ""
@@ -104,6 +121,35 @@ def main() -> int:
                     print(f"blocked hijack navigation to {request.url} (backstop)", flush=True)
                     route.fulfill(status=200, content_type="text/html", body="<html></html>")
                     return
+
+                # Kitchen-sink measure: this is NRE's own top-level document
+                # load (the only one we expect — everything after this is a
+                # client-side SPA state change, not a real navigation). Inject
+                # a strict CSP that blocks ALL third-party script execution
+                # outright, cutting off the entire ad ecosystem (including
+                # whatever fires the redirect, wherever it actually lives) at
+                # the root, rather than trying to enumerate every possible
+                # trigger domain one at a time. 'self' covers NRE's own
+                # same-origin bundle (served from this same host); inline/eval
+                # stay allowed since Next.js hydration data and the app's own
+                # bundle commonly need them.
+                if not csp_injected_once and request.resource_type == "document":
+                    try:
+                        response = route.fetch()
+                        body = response.text()
+                        csp_meta = (
+                            '<meta http-equiv="Content-Security-Policy" '
+                            "content=\"script-src 'self' 'unsafe-inline' 'unsafe-eval';\">"
+                        )
+                        if "<head>" in body:
+                            body = body.replace("<head>", "<head>" + csp_meta, 1)
+                            csp_injected_once = True
+                            print("injected strict CSP into main document", flush=True)
+                            route.fulfill(response=response, body=body)
+                            return
+                    except Exception as exc:
+                        print(f"CSP injection failed, serving unmodified: {exc}", flush=True)
+                        # fall through to route.continue_()
         except Exception as exc:
             print(f"route handler error (falling through to continue): {exc}", flush=True)
         route.continue_()
@@ -312,13 +358,58 @@ def main() -> int:
         except Exception as exc:
             print(f"element dump failed: {exc}", flush=True)
 
+        def _force_uncheck_via_native_setter(label: str) -> None:
+            """A plain .click() on the checkbox executed without error in a
+            previous run but never actually changed its checked state — a
+            strong sign this is a React-controlled checkbox where the real
+            clickable surface is a different element (no <label> exists in
+            the DOM), and/or React's own event handling doesn't register a
+            raw DOM click the way it expects. The standard way to force a
+            controlled input's value in a way React's synthetic event system
+            actually notices: set the value via the native property setter
+            (bypassing React's own tracked-value shadowing of the property),
+            then dispatch real 'input'/'change' events that bubble up to
+            wherever React attached its listeners.
+            """
+            try:
+                result = page.evaluate(
+                    """
+                    () => {
+                      const el = document.querySelector(
+                        "input[type='checkbox'][value='find_hotels']"
+                      );
+                      if (!el) return 'not_found';
+                      if (!el.checked) return 'already_unchecked';
+                      try {
+                        const proto = window.HTMLInputElement.prototype;
+                        const nativeSetter = Object.getOwnPropertyDescriptor(
+                          proto, 'checked'
+                        ).set;
+                        nativeSetter.call(el, false);
+                        el.dispatchEvent(new Event('input', { bubbles: true }));
+                        el.dispatchEvent(new Event('change', { bubbles: true }));
+                      } catch (e) {
+                        return 'error: ' + e;
+                      }
+                      return el.checked ? 'still_checked' : 'confirmed_unchecked';
+                    }
+                    """
+                )
+                print(f"[{label}] native-setter uncheck result: {result}", flush=True)
+            except Exception as exc:
+                print(f"[{label}] native-setter uncheck failed: {exc}", flush=True)
+
         def _try_uncheck_find_hotels(label: str) -> None:
             """Try several interaction strategies against the custom-styled
             find_hotels checkbox, since .uncheck() timed out in a previous
             run (Locator.uncheck also waits to verify the resulting checked
             state, which a custom checkbox implementation may never satisfy
-            the way it expects) — a plain .click() doesn't wait for that.
+            the way it expects) — a plain .click() doesn't wait for that,
+            but also didn't work (checkbox still checked afterward). Try the
+            native-setter approach first since it's the more targeted fix
+            for a React-controlled input; fall back to a plain click.
             """
+            _force_uncheck_via_native_setter(label)
             try:
                 hotels_checkbox = page.locator("input[type='checkbox'][value='find_hotels']")
                 count = hotels_checkbox.count()
@@ -350,19 +441,37 @@ def main() -> int:
         # matches our need), an "Add Railcard" button, and the real submit
         # button #button-jp labeled "Get times and prices" (strong signal
         # NRE shows fares directly, not just timetables).
+        def _select_autocomplete_option(field_label: str) -> None:
+            """Prefer clicking the actual visible autocomplete suggestion
+            with the mouse over blind ArrowDown+Enter — untested but cheap
+            hypothesis: if the redirect trigger is bound to the destination
+            field's Enter keydown specifically (rather than to "a station
+            got selected" generally), a mouse click sidesteps it entirely.
+            Falls back to keyboard if no option element is visible.
+            """
+            try:
+                option = page.locator("[role='option']").first
+                if option.count() > 0:
+                    option.click(timeout=3000)
+                    print(f"clicked visible autocomplete option for {field_label}", flush=True)
+                    return
+            except Exception as exc:
+                print(f"clicking autocomplete option for {field_label} failed: {exc}", flush=True)
+            page.keyboard.press("ArrowDown")
+            page.keyboard.press("Enter")
+            print(f"fell back to ArrowDown+Enter for {field_label}", flush=True)
+
         try:
             origin_input = page.locator("#jp-origin")
             origin_input.fill("Oxford", timeout=8000)
             page.wait_for_timeout(1200)
-            page.keyboard.press("ArrowDown")
-            page.keyboard.press("Enter")
+            _select_autocomplete_option("origin")
             page.wait_for_timeout(500)
 
             dest_input = page.locator("#jp-destination")
             dest_input.fill("London Paddington", timeout=8000)
             page.wait_for_timeout(1200)
-            page.keyboard.press("ArrowDown")
-            page.keyboard.press("Enter")
+            _select_autocomplete_option("destination")
             page.wait_for_timeout(500)
 
             filled = True
