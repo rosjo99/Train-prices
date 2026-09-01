@@ -27,7 +27,9 @@ ORIGIN_NAME = "Oxford"
 DESTINATION_NAME = "London Paddington"
 
 # National Rail Enquiries CRS (station) codes. Confirmed live on
-# 2026-08-31 via scripts/probe_nre_deeplink.py: navigating to
+# 2026-08-31 via a one-off probe script (since deleted as dead research
+# code once its findings were implemented here — see git history if
+# needed): navigating to
 # JOURNEY_PLANNER_URL_TEMPLATE below with these two codes returned a
 # results page showing "Oxford to London Paddington" and real journeys
 # (see JOURNEY_PLANNER_API_HOST's comment for the fare evidence).
@@ -40,8 +42,10 @@ TARGET_DEPARTURES: tuple[str, ...] = ("07:25", "07:30")
 
 PRICE_THRESHOLD = Decimal("10.00")
 
-# Confirmed live on 2026-08-31 via scripts/probe_nre_deeplink.py: passing
-# railcards=YNG|1 in the deep-link URL produced a real fare response whose
+# Confirmed live on 2026-08-31 via a one-off probe script (since deleted
+# as dead research code once its findings were implemented here — see
+# git history if needed): passing railcards=YNG|1 in the deep-link URL
+# produced a real fare response whose
 # jpservices.nationalrail.co.uk/journey-planner JSON contained, per fare,
 # a "railcardFares" array entry with "code": "YNG" and a discounted
 # "prices.adult" distinct from that fare's own "undiscountedPrices" — e.g.
@@ -54,8 +58,10 @@ PRICE_THRESHOLD = Decimal("10.00")
 # for NRE too — a coincidence, not carried-over evidence.
 RAILCARD_CODE = "YNG"
 
-# Confirmed live on 2026-08-31 via scripts/probe_nre_deeplink.py: this
-# exact query-string shape, with the CRS codes/railcard code above
+# Confirmed live on 2026-08-31 via a one-off probe script (since deleted
+# as dead research code once its findings were implemented here — see
+# git history if needed): this exact query-string shape, with the CRS
+# codes/railcard code above
 # substituted in, loaded straight into a real results page — no click
 # needed — showing "07:25 journey from Oxford to London Paddington" and
 # "07:30 journey from Oxford to London Paddington" each priced at

@@ -1,16 +1,9 @@
 name: Capture NRE fixture (manual dev tool)
 
-# Standalone from discover-fixture.yml (the exploratory probe scripts)
-# deliberately: this is the one job that matters for Task 4 of
-# docs/plans/001-train-price-alert.md — running the production
-# scripts/capture_fixture.py against a real date to produce
-# tests/fixtures/journey_search_sample.json. Keeping it in its own
-# workflow file means dispatching it never also re-runs the probe
-# scripts in discover-fixture.yml, which was confusing (both fired
-# together under a shared workflow_dispatch trigger) and unnecessary —
-# the deep-link approach they were investigating is already confirmed
-# and implemented in src/scraper.py. No secrets required — this only
-# fetches public train prices.
+# Manual dev tool for Task 4 of docs/plans/001-train-price-alert.md —
+# runs scripts/capture_fixture.py against a real date to regenerate
+# tests/fixtures/journey_search_sample.json. No secrets required — this
+# only fetches public train prices.
 
 on:
   workflow_dispatch:

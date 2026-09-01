@@ -948,6 +948,9 @@ the user sees the format immediately):
 # 2026-09-08
 ```
 
+**Revision:** booked dates are no longer excluded from scraping — see
+the revision note after step 2 below.
+
 `main() -> int`:
 1. Compute `today = datetime.now(config.LONDON).date()`.
 2. `all_candidates = term_dates.checkable_dates(today + 1 day, term_dates.LAST_KNOWN_DATE)`
@@ -958,6 +961,13 @@ the user sees the format immediately):
    many were skipped as already booked (and which dates, at INFO level).
    If `config.MAX_DATES` is set (debug/manual runs only), truncate
    `candidates` to the first `MAX_DATES` entries.
+
+   **Revision:** this was later changed — booked dates are still scraped
+   and logged to `price-history.csv` (so the booked-dates website keeps
+   showing fresh prices for them), only suppressed at the alert-threshold
+   check rather than filtered out of `candidates` up front. See
+   `src/main.py` and CLAUDE.md's "Marking a date as already booked"
+   section for the current behaviour, not reproduced in full here.
 3. If `candidates` is empty → log `"No checkable travel dates remaining this school year — nothing to do."` (or, if `all_candidates` was non-empty but all booked, `"All remaining dates are already booked — nothing to do."`), return `0`. **No browser launch, no email.**
 4. Load secrets *before* scraping, so a misconfiguration fails fast.
    (Originally specced to skip this in `DRY_RUN` — removed in Task 7's
