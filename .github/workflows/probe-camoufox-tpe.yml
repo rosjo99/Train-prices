@@ -1,7 +1,5 @@
 name: Probe TPE with Camoufox (manual diagnostic)
 
-# Does Camoufox get data from TPE
-
 on:
   workflow_dispatch: {}
 
@@ -11,14 +9,24 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install "camoufox[geoip]"
-      - run: python -m camoufox fetch
+
+      - name: Install Camoufox
+        run: pip install "camoufox[geoip]"
+
+      - name: Fetch Camoufox
+        run: python -m camoufox fetch
+
+      - name: Install Playwright Chromium
+        run: python -m playwright install --with-deps chromium
+
       - name: Run probe
         id: probe
         run: python scripts/probe_camoufox_tpe.py --out-dir /tmp/camoufox-probe
+
       - name: Upload probe artifacts
         if: always()
         uses: actions/upload-artifact@v4
