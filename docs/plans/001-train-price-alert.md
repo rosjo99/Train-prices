@@ -153,6 +153,41 @@ This is the confirmation the standing "don't move on" instruction was
 gated on, and is why §2 onward below describes an NRE-based design
 rather than the Trainline one originally planned.
 
+### 1.5 CrossCountry investigated (2026-09-01) and rejected — Cloudflare bot management
+
+Motivation: NRE's journey planner doesn't expose every date NRE's own
+fare-release horizon should allow (see `FULL_RETRY_HORIZON_DAYS` in
+CLAUDE.md) — worth checking whether CrossCountry's own booking site,
+which also supports a fully-parameterised deep-link
+(`https://buy.crosscountrytrains.co.uk/search?origin=GBOXF&destination=GBQQP&adults=1&children=0&outboundTime=<ISO8601>&outboundTimeType=DEPARTURE&railcards=%5B%7B%22Code%22:%22UK_YOUTH%22,%22Number%22:1,%22Type%22:%22DISCOUNT_CARD%22%7D%5D&ls=LS_1_3&p=PRICE_P_1_19`),
+could supplement or replace NRE for a longer booking horizon.
+
+Result: rejected. `buy.crosscountrytrains.co.uk` sits behind Cloudflare
+bot management, confirmed live:
+- `curl` (no browser) against the deep-link consistently gets a
+  Cloudflare "Attention Required" / "Sorry, you have been blocked" page,
+  HTTP 403, `server: cloudflare` — 3/3 attempts.
+- Headless Chromium via Playwright (this project's own scraping
+  approach, `--disable-blink-features=AutomationControlled`, real
+  Chrome UA, `en-GB` locale) doesn't even get a response: the TLS
+  connection is reset (`net::ERR_CONNECTION_RESET`) before any HTML
+  loads — reproduced twice on the deep-link URL and again on the plain
+  `www.crosscountrytrains.co.uk` and `buy.crosscountrytrains.co.uk`
+  homepages, so this is a domain-wide block, not specific to the search
+  endpoint. Confirmed not a proxy artifact — the outbound proxy's own
+  status log shows the far side (`buy.crosscountrytrains.co.uk:443`)
+  closing the tunnel mid-handshake, matching the client-side reset.
+
+This is the same category of blocker Trainline was rejected for in
+§1.1-1.3 (bot protection that fingerprints and drops automated
+traffic), just a different vendor (Cloudflare here vs. DataDome for
+Trainline) and a harder failure mode (connection-level reset vs. a
+CAPTCHA page). Per this project's standing decision to use no proxies,
+stealth plugins, or CAPTCHA-solving (CLAUDE.md's Tech decisions), there
+is no further mitigation to try within the project's own constraints.
+NRE remains the only viable retailer for this project; CrossCountry is
+not a source of additional dates.
+
 ---
 
 ## 2. Decisions not already in CLAUDE.md
