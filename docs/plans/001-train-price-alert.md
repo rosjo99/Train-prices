@@ -188,6 +188,37 @@ is no further mitigation to try within the project's own constraints.
 NRE remains the only viable retailer for this project; CrossCountry is
 not a source of additional dates.
 
+### 1.6 East Midlands Railway investigated (2026-09-01) and rejected — it's Trainline, DataDome-protected
+
+Same motivation as §1.5: EMR's booking site
+(`buytickets.eastmidlandsrailway.co.uk`) also accepts a
+fully-parameterised deep-link
+(`https://www.buytickets.eastmidlandsrailway.co.uk/book/results?journeySearchType=single&origin=<id>&destination=<id>&outwardDateType=departAfter&outwardDate=<ISO8601>&passengers%5B%5D=<dob>&passengerDiscountCards%5B%5D=<id>&directSearch=false&selectedCarrierFilterTab=ALL_TRAINS&bookingToken=&referrer=MKT&selectedOutward=<token>`),
+worth checking as a second alternative source of dates.
+
+Result: rejected — it's the same site as Trainline. The static HTML
+`curl` fetches (HTTP 200, 3/3 attempts, real ~990KB page markup, no
+block page) is served under `data-test="app-EastMidlandsRailwayWeb-EastMidlandsRailway"`
+and itself loads `js.datadome.co/tags.js` and
+`static.trainlinecontent.com` — EMR's booking engine is a Trainline
+white-label deployment, not an independent site, so it inherits
+Trainline's DataDome protection (the reason Trainline itself was
+rejected in §1.1-1.3). Confirmed live: headless Chromium via
+Playwright (this project's own approach) gets `net::ERR_CONNECTION_RESET`
+on the deep-link, reproduced twice, and again on the unrelated
+`www.eastmidlandsrailway.co.uk` marketing homepage — a domain-wide
+block, same signature as §1.5's CrossCountry finding (outbound proxy's
+own status log confirms the far side closing the tunnel mid-handshake,
+ruling out a proxy-side cause). `curl` succeeding where headless
+Chromium is reset outright shows DataDome here is fingerprinting and
+blocking at the connection level specifically for the automated
+browser, not blocking all traffic indiscriminately.
+
+No further investigation needed: this is architecturally the same
+site Trainline was already rejected for, so the same conclusion
+applies without a separate cost/benefit case. NRE remains the only
+viable retailer.
+
 ---
 
 ## 2. Decisions not already in CLAUDE.md
