@@ -251,6 +251,18 @@ references in the plain HTML (visible even via `curl`, no browser
 needed) before spending a live headless-browser probe on it. NRE
 remains the only viable retailer.
 
+### 1.8 Northern Railway checked (2026-09-01) and rejected via the §1.7 shortcut — no live browser probe needed
+
+Northern's booking site (`buytickets.northernrailway.co.uk`) also
+accepts the same deep-link shape. Applying §1.7's shortcut: a `curl`
+of the deep-link (HTTP 200) shows `data-test="app-NorthernRailwayWeb-NorthernRailway"`
+and the same `js.datadome.co`/`static.trainlinecontent.com` references
+and identical webpack bundle hashes
+(`app.010e8419aad13e9266b2.mjs`, `runtime~app.c126f6b8ef1209832b95.mjs`)
+as EMR's and LNR's pages. Same shared Trainline white-label
+deployment, rejected without a separate live headless-browser probe.
+NRE remains the only viable retailer.
+
 ---
 
 ## 2. Decisions not already in CLAUDE.md
