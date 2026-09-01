@@ -219,6 +219,38 @@ site Trainline was already rejected for, so the same conclusion
 applies without a separate cost/benefit case. NRE remains the only
 viable retailer.
 
+### 1.7 London Northwestern Railway investigated (2026-09-01) and rejected — also Trainline
+
+Same shape again: LNR's booking site
+(`buytickets.londonnorthwesternrailway.co.uk`) accepts the identical
+deep-link URL shape as §1.6's EMR one, just with `<carrier>` swapped
+in the hostname. Checked as a third possible additional source of
+dates.
+
+Result: rejected, immediately — it's the same Trainline white-label
+engine as EMR, not a separate investigation. The static HTML `curl`
+fetches (HTTP 200, 3/3 attempts) is served under
+`data-test="app-LondonNorthwesternRailwayWeb-LondonNorthwesternRailway"`,
+loads `js.datadome.co`/`static.trainlinecontent.com` exactly like
+EMR's did, and — stronger evidence than EMR's page alone — ships the
+*same webpack bundle filenames/hashes* as EMR's page
+(`app.010e8419aad13e9266b2.mjs`, `runtime~app.c126f6b8ef1209832b95.mjs`,
+`vendors.2a45cbf76fcf3d3d8ef1.mjs`), confirming EMR and LNR aren't
+just similarly built but are served from the shared Trainline
+white-label deployment. Confirmed live: headless Chromium gets
+`net::ERR_CONNECTION_RESET` on both the deep-link and the unrelated
+`www.londonnorthwesternrailway.co.uk` marketing homepage — same
+domain-wide block signature as §1.5/§1.6.
+
+Given the shared-infrastructure evidence, any other train operating
+company found serving from `buytickets.<operator>.co.uk` with this
+same page shape should be assumed Trainline/DataDome-protected without
+a full re-investigation — check for the `app-<Operator>Web-<Operator>`
+`data-test` marker and `js.datadome.co`/`static.trainlinecontent.com`
+references in the plain HTML (visible even via `curl`, no browser
+needed) before spending a live headless-browser probe on it. NRE
+remains the only viable retailer.
+
 ---
 
 ## 2. Decisions not already in CLAUDE.md
