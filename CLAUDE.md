@@ -69,14 +69,15 @@ got here.
   rejection since CrossCountry. None of this is fixable
   without TLS fingerprint spoofing, which is stealth tooling this
   project's standing decision already rules out. The exception to
-  "curl gets through": Rail Europe (`www.raileurope.com`) — the same
-  DataDome product blocking Trainline, but configured to challenge
-  even a plain `curl` request outright (HTTP 403, `x-datadome:
-  protected`, an explicit CAPTCHA interstitial body) rather than only
-  automated browsers, so no browser probe was needed to reach a
-  verdict there. NRE has no bot protection at all (confirmed via 20+
-  live probe runs). See `docs/plans/001-train-price-alert.md`
-  §1.4/§1.5/§1.6/§1.7/§1.8/§1.9/§1.10/§1.11/§1.12/§1.13/§2.2.
+  "curl gets through": Rail Europe (`www.raileurope.com`) and Klook
+  (`www.klook.com`) — the same DataDome product blocking Trainline,
+  but configured to challenge even a plain `curl` request outright
+  (HTTP 403, `x-datadome: protected`, an explicit CAPTCHA interstitial
+  body — identical template on both sites) rather than only automated
+  browsers, so no browser probe was needed to reach a verdict on
+  either. NRE has no bot protection at all (confirmed via 20+ live
+  probe runs). See `docs/plans/001-train-price-alert.md`
+  §1.4/§1.5/§1.6/§1.7/§1.8/§1.9/§1.10/§1.11/§1.12/§1.13/§1.14/§2.2.
 - **Scraping approach:** Playwright (sync API), headless Chromium,
   navigating straight to a fully-parameterised deep-link URL —
   `https://www.nationalrail.co.uk/journey-planner/?type=single&origin=OXF&destination=PAD&leavingType=departing&leavingDate=DDMMYY&leavingHour=HH&leavingMin=MM&adults=1&railcards=YNG%7C1&extraTime=0`

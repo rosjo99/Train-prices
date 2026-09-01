@@ -421,6 +421,22 @@ shared-infrastructure inference alone: headless Chromium gets
 TrainPal, confirmed via the outbound proxy's own status log. NRE
 remains the only viable retailer.
 
+### 1.14 Klook investigated (2026-09-01) and rejected — blocked outright, same pattern as Rail Europe
+
+Klook (`www.klook.com`, deep-link shape
+`https://www.klook.com/en-GB/rails-4/<region>/search/?origin_position=<uuid>&destination_position=<uuid>&departure_date=<YYYY-MM-DD>&departure_time=<HH:MM>&passengers=<JSON>&...`)
+— better known as an activities/attractions OTA, also selling UK rail
+tickets — is rejected the same way as §1.12's Rail Europe: `curl`
+alone settles it, no browser probe needed. `curl` against the deep-link
+gets HTTP 403, 3/3 attempts, with `x-datadome: protected`, a `datadome`
+cookie, `server: cloudflare`, and a body that is the identical DataDome
+CAPTCHA interstitial template seen on Rail Europe ("Please enable JS
+and disable any ad blocker", loading `geo.captcha-delivery.com`) — down
+to matching page structure, just a different embedded config blob.
+Same DataDome-behind-Cloudflare configuration, challenging plain `curl`
+outright rather than only automated browsers. NRE remains the only
+viable retailer.
+
 ---
 
 ## 2. Decisions not already in CLAUDE.md
