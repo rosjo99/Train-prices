@@ -34,27 +34,28 @@ got here.
   (`playwright`, `requests`, `pytest`). Money uses `decimal.Decimal`,
   never `float`; all dates/times go through
   `zoneinfo.ZoneInfo("Europe/London")`, never a naive clock read.
-- **Retailer: National Rail Enquiries, not Trainline, CrossCountry,
-  East Midlands Railway, London Northwestern Railway, or Northern.**
-  Trainline sits behind DataDome bot protection (confirmed live: 403 +
-  CAPTCHA on both its API and a deep-linked results URL). CrossCountry's
-  booking site (`buy.crosscountrytrains.co.uk`), which also offers a
-  deep-link, sits behind Cloudflare bot management — confirmed live:
-  headless Chromium gets a connection reset on both its deep-link and
-  its plain homepage, domain-wide, not just an endpoint-specific block.
-  EMR's (`buytickets.eastmidlandsrailway.co.uk`), LNR's
-  (`buytickets.londonnorthwesternrailway.co.uk`), and Northern's
-  (`buytickets.northernrailway.co.uk`) booking sites are all the same
-  Trainline white-label deployment — confirmed live (identical webpack
-  bundle hashes across all three) — so they all inherit Trainline's
-  DataDome protection, same connection-reset signature as CrossCountry.
-  Any other train operator found serving from `buytickets.<operator>.co.uk`
-  with the same page shape should be assumed Trainline/DataDome-protected
-  without a full re-investigation (see
+- **Retailer: National Rail Enquiries, not any UK train retailer other
+  than NRE.** Every non-NRE retailer checked so far is bot-protected,
+  domain-wide, against headless Chromium (`net::ERR_CONNECTION_RESET`
+  on the deep-link and on unrelated pages of the same site) even though
+  plain `curl` gets through cleanly — treat this as the default
+  expectation for any new UK train retailer, not something to assume
+  safe until proven otherwise. Confirmed so far: Trainline itself
+  (DataDome, 403 + CAPTCHA); CrossCountry
+  (`buy.crosscountrytrains.co.uk`, Cloudflare bot management); East
+  Midlands Railway, London Northwestern Railway, and Northern
+  (`buytickets.<operator>.co.uk` — all three are the same Trainline
+  white-label deployment, confirmed via identical webpack bundle
+  hashes, so inherit Trainline's DataDome protection — any other
+  operator on this same `buytickets.<operator>.co.uk` shape can be
+  assumed the same without a full re-investigation, see
   `docs/plans/001-train-price-alert.md` §1.7's closing note for the
-  quick `curl`-only check). NRE has no bot protection at all (confirmed
-  via 20+ live probe runs). See `docs/plans/001-train-price-alert.md`
-  §1.4/§1.5/§1.6/§1.7/§1.8/§2.2.
+  quick `curl`-only check); and TransPennine Express
+  (`ticket.tpexpress.co.uk`) — a genuinely different booking engine
+  with no DataDome/Cloudflare markers in its static HTML, still blocked
+  by an unidentified connection-level bot check. NRE has no bot
+  protection at all (confirmed via 20+ live probe runs). See
+  `docs/plans/001-train-price-alert.md` §1.4/§1.5/§1.6/§1.7/§1.8/§1.9/§2.2.
 - **Scraping approach:** Playwright (sync API), headless Chromium,
   navigating straight to a fully-parameterised deep-link URL —
   `https://www.nationalrail.co.uk/journey-planner/?type=single&origin=OXF&destination=PAD&leavingType=departing&leavingDate=DDMMYY&leavingHour=HH&leavingMin=MM&adults=1&railcards=YNG%7C1&extraTime=0`

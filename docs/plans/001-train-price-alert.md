@@ -263,6 +263,43 @@ as EMR's and LNR's pages. Same shared Trainline white-label
 deployment, rejected without a separate live headless-browser probe.
 NRE remains the only viable retailer.
 
+### 1.9 TransPennine Express investigated (2026-09-01) and rejected — different engine, still blocked
+
+TPE's booking site (`ticket.tpexpress.co.uk`, deep-link shape
+`https://ticket.tpexpress.co.uk/journeys-grid/<origin>/<destination>/<ISO8601>//1//<railcard>x1?departNow=no&realTime=no&searchPreferences=&showAdditionalRoutes=no&showCheapest=no&tocSpecific=no`)
+is a genuinely different booking engine from §1.6-1.8's Trainline
+white-label sites — its static HTML carries no DataDome or
+`trainlinecontent.com` reference, just a page titled "Booking Engine"
+loading `otrl.io`/`roeye.com`/Salesforce-hosted assets, and the only
+"captcha"/"cloudflare" string matches in the page are a payment-page
+`googleRecaptchaKey` and a `cdnjs.cloudflare.com` CDN script tag —
+neither is bot protection on the search page itself. `curl` against
+the deep-link gets a clean HTTP 200 with real page content, 3/3
+attempts.
+
+Result: still rejected. Headless Chromium via Playwright gets
+`net::ERR_CONNECTION_RESET` on the deep-link (reproduced twice) and
+again on both `www.tpexpress.co.uk` and the bare `ticket.tpexpress.co.uk`
+root — domain-wide, same signature as §1.5-1.8 (outbound proxy's own
+status log confirms the far side closing the tunnel mid-handshake:
+39 bytes received, mid-handshake, matching `curl`'s clean success on
+the exact same URL from the same environment). The specific
+bot-protection vendor here is unconfirmed — no vendor script/marker
+appears in the static HTML the way DataDome's or Cloudflare's do
+elsewhere, so this is presumably a connection-level fingerprint check
+(TLS/HTTP2 client fingerprinting, e.g. Akamai/AWS WAF Bot
+Control/PerimeterX-style) that never lets a detected headless browser
+far enough to load any page content, JS included. Whatever the vendor,
+the practical outcome is identical to every other retailer checked so
+far: `curl` (no browser) gets through, this project's actual
+Playwright-based scraper does not.
+
+This confirms the connection-level block pattern isn't limited to the
+two vendors already identified (Cloudflare, DataDome) — worth treating
+as the default expectation for any UK train retailer's booking engine
+that isn't NRE, rather than assuming a new one is safe until proven
+otherwise. NRE remains the only viable retailer.
+
 ---
 
 ## 2. Decisions not already in CLAUDE.md
