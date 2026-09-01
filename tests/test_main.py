@@ -11,6 +11,7 @@ which necessarily monkeypatches datetime.now itself.
 from __future__ import annotations
 
 import datetime as datetime_module
+import threading
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -68,12 +69,15 @@ def _install_fake_scraper(monkeypatch: pytest.MonkeyPatch, results_by_date: dict
     """results_by_date maps date -> raw dict (success) or Exception instance
     (raised). Returns the list of dates actually fetched.
 
-    main() now scrapes up to main.PARALLEL_DATES dates concurrently within
-    each batch (see src/main.py), so within a single batch this list's
-    order is not guaranteed — list.append is thread-safe (the GIL makes
-    it atomic), but which worker thread runs first isn't. Tests that care
-    about ordering only rely on it ACROSS batches (batch N+1 is never
-    dispatched until batch N has fully finished), never within one.
+    main() now runs a continuous scheduler with up to main.PARALLEL_DATES
+    scrapes in flight at once (see src/main.py), refilling the window the
+    instant any one completes — so with the default PARALLEL_DATES, the
+    order dates are actually fetched in is a genuine thread race and not
+    guaranteed to match dispatch order. list.append is thread-safe (the
+    GIL makes it atomic), so no calls are lost, but tests that care about
+    ORDER should set `monkeypatch.setattr(main, "PARALLEL_DATES", 1)`,
+    which makes the scheduler degenerate to strictly serial submit / wait
+    / finalize.
     """
     calls: list[date] = []
 
@@ -254,9 +258,9 @@ def test_scraper_fails_on_one_date_others_still_checked(monkeypatch):
     result = main.main(today=TERM_TIME_DAY)
 
     assert result == 0
-    # All three are within one concurrent batch (main.PARALLEL_DATES=5),
-    # so intra-batch order isn't guaranteed — only that every one of them
-    # got attempted.
+    # All three can be in flight at once (main.PARALLEL_DATES=5), so
+    # fetch order isn't guaranteed — only that every one of them got
+    # attempted.
     assert set(fetch_calls) == {d1, d2, d3}
 
 
@@ -279,6 +283,10 @@ def test_five_consecutive_failed_dates_stops_early(monkeypatch):
     # NRE only releases fares roughly 12 weeks ahead — dates beyond that
     # horizon fail every time, so this guards against burning the full
     # per-date retry budget on every remaining date of the school year.
+    # PARALLEL_DATES=1 makes the scheduler strictly serial, so dispatch
+    # (and therefore fetch) order is deterministic and d6 is provably
+    # never submitted once d1-d5 latch the stop.
+    monkeypatch.setattr(main, "PARALLEL_DATES", 1)
     d1, d2, d3, d4, d5 = (
         date(2026, 9, 8),
         date(2026, 9, 10),
@@ -304,10 +312,9 @@ def test_five_consecutive_failed_dates_stops_early(monkeypatch):
     result = main.main(today=TERM_TIME_DAY)
 
     assert result == 1
-    # d1-d5 are exactly one concurrent batch (main.PARALLEL_DATES=5), so
-    # they're all dispatched together — order isn't guaranteed, but d6
-    # (the next batch) must never be attempted at all.
-    assert set(fetch_calls) == {d1, d2, d3, d4, d5}
+    # Strictly serial (PARALLEL_DATES=1): d1-d5 fail in order, latching
+    # the stop before d6 is ever submitted.
+    assert fetch_calls == [d1, d2, d3, d4, d5]
     assert send_calls == []
 
 
@@ -335,17 +342,21 @@ def test_a_success_between_failures_resets_the_consecutive_count(monkeypatch):
     result = main.main(today=TERM_TIME_DAY)
 
     assert result == 0
-    # Every candidate date must be attempted (never stops early) — batches
-    # of main.PARALLEL_DATES=5 are dispatched strictly in sequence, so
-    # every date in the first batch precedes every date in the second,
-    # but order *within* a batch isn't guaranteed.
-    assert set(fetch_calls[:5]) == set(dates[:5])
-    assert set(fetch_calls[5:]) == set(dates[5:])
+    # Every candidate date must be attempted (never stops early). This is
+    # scheduler-agnostic — it doesn't assert on order, so it's robust
+    # under any concurrency, and doesn't need PARALLEL_DATES pinned.
+    assert set(fetch_calls) == set(dates)
+    assert len(fetch_calls) == len(dates)
 
 
 def test_five_consecutive_parse_failures_also_stops_early(monkeypatch):
     # The consecutive-failure count spans both failure types (scrape and
     # parse), not just one — a mix of the two should still trip it.
+    # PARALLEL_DATES=1 makes d6 provably never dispatched, so `results`
+    # stays empty and the run returns 1 — with the default window, d6
+    # could be dispatched (and succeed) before the stop latches, and the
+    # run would return 0 instead.
+    monkeypatch.setattr(main, "PARALLEL_DATES", 1)
     d1, d2, d3, d4, d5 = (
         date(2026, 9, 8),
         date(2026, 9, 10),
@@ -389,17 +400,16 @@ def _seven_dates() -> list[date]:
         date(2026, 9, 11),
         date(2026, 9, 15),
         date(2026, 9, 17),
-        date(2026, 9, 18),  # in the 2nd batch — must never be attempted
-        date(2026, 9, 22),  # in the 2nd batch — must never be attempted
+        date(2026, 9, 18),  # must never be attempted
+        date(2026, 9, 22),  # must never be attempted
     ]
 
 
-def test_blocked_error_aborts_before_the_next_batch(monkeypatch):
-    # Dates 0-4 are one concurrent batch (main.PARALLEL_DATES=5): since
-    # they're dispatched together, some of d1's batch-mates may still get
-    # fetched even though d1 comes back blocked — that's an accepted cost
-    # of running dates concurrently. What must never happen is the run
-    # going on to schedule the SECOND batch at all.
+def test_blocked_error_aborts_the_run(monkeypatch):
+    # PARALLEL_DATES=1 makes the scheduler strictly serial: dates[0]
+    # comes back BlockedError and the whole run aborts before any later
+    # date is ever submitted.
+    monkeypatch.setattr(main, "PARALLEL_DATES", 1)
     dates = _seven_dates()
     results_by_date = {d: _raw() for d in dates}
     results_by_date[dates[0]] = scraper.BlockedError("blocked")
@@ -409,11 +419,11 @@ def test_blocked_error_aborts_before_the_next_batch(monkeypatch):
     result = main.main(today=TERM_TIME_DAY)
 
     assert result == 1
-    assert dates[5] not in fetch_calls
-    assert dates[6] not in fetch_calls
+    assert fetch_calls == [dates[0]]
 
 
-def test_hijacked_error_aborts_before_the_next_batch(monkeypatch):
+def test_hijacked_error_aborts_the_run(monkeypatch):
+    monkeypatch.setattr(main, "PARALLEL_DATES", 1)
     dates = _seven_dates()
     results_by_date = {d: _raw() for d in dates}
     results_by_date[dates[0]] = scraper.HijackedError("hijacked")
@@ -423,8 +433,217 @@ def test_hijacked_error_aborts_before_the_next_batch(monkeypatch):
     result = main.main(today=TERM_TIME_DAY)
 
     assert result == 1
-    assert dates[5] not in fetch_calls
-    assert dates[6] not in fetch_calls
+    assert fetch_calls == [dates[0]]
+
+
+# ---------------------------------------------------------------------------
+# Continuous scheduler (docs/plans/003-scheduler-and-retry-horizon.md §4.2,
+# §4.3) and boundary-first dispatch (§4.6). The two tests that need
+# deterministic completion-order control use a threading.Event as a gate
+# INSIDE the fakes, never a sleep — no wall-clock timing dependency.
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_starts_a_new_date_before_the_window_drains(monkeypatch):
+    # Direct test of Change 2's whole purpose: with a straggler still
+    # running, the scheduler must refill the window rather than waiting
+    # for the whole batch to finish. c0 blocks; c2 (dispatched while c0
+    # is still in flight, once c1 frees a slot) sets the gate that
+    # unblocks it. Under the old fixed-batch scheduler this would time
+    # out and record False.
+    monkeypatch.setattr(main, "PARALLEL_DATES", 2)
+    c0, c1, c2, c3 = (
+        date(2026, 9, 8),
+        date(2026, 9, 10),
+        date(2026, 9, 11),
+        date(2026, 9, 15),
+    )
+    gate = threading.Event()
+    gate_result: dict[str, bool] = {}
+
+    def _fake_fetch(travel_date, *, artifacts_dir=None, attempts=None):
+        if travel_date == c0:
+            gate_result["opened_before_c0_returned"] = gate.wait(timeout=5)
+        elif travel_date == c2:
+            gate.set()
+        return _raw()
+
+    monkeypatch.setattr(main.scraper, "fetch_journey_search", _fake_fetch)
+    monkeypatch.setattr(main.config, "MAX_DATES", 4)
+
+    result = main.main(today=TERM_TIME_DAY)
+
+    assert result == 0
+    assert gate_result["opened_before_c0_returned"] is True
+
+
+def test_stop_early_still_finalizes_results_already_in_flight(
+    monkeypatch, _isolated_price_log
+):
+    # Direct test of §4.3 point 3 (and the §1.4-item-2 behaviour change):
+    # c0-c4 all fail — the fifth failure (c4) latches the stop — but c5
+    # was already dispatched and completes (with a real sub-threshold
+    # fare) while c4 is still failing, so it must still be finalized:
+    # logged to the price log and alerted on, not silently dropped.
+    monkeypatch.setattr(main, "PARALLEL_DATES", 2)
+    c0, c1, c2, c3, c4, c5 = (
+        date(2026, 9, 8),
+        date(2026, 9, 10),
+        date(2026, 9, 11),
+        date(2026, 9, 15),
+        date(2026, 9, 17),
+        date(2026, 9, 18),
+    )
+    gate = threading.Event()
+
+    def _fake_fetch(travel_date, *, artifacts_dir=None, attempts=None):
+        if travel_date == c4:
+            gate.wait(timeout=5)
+            raise scraper.ScraperError("boom")
+        if travel_date == c5:
+            gate.set()
+            return _raw(_journey(c5, "07:25", "08:26", Decimal("5.00")))
+        if travel_date in (c0, c1, c2, c3):
+            raise scraper.ScraperError("boom")
+        raise AssertionError(f"unexpected date {travel_date}")
+
+    monkeypatch.setattr(main.scraper, "fetch_journey_search", _fake_fetch)
+    send_calls = _install_fake_notifier(monkeypatch)
+    monkeypatch.setattr(main.config, "MAX_DATES", 6)
+
+    result = main.main(today=TERM_TIME_DAY)
+
+    assert result == 0
+    content = _isolated_price_log.read_text(encoding="utf-8")
+    assert c5.isoformat() in content
+    assert len(send_calls) == 1
+    assert send_calls[0]["matches"][0].travel_date == c5
+
+
+def test_boundary_zone_date_is_dispatched_first(monkeypatch):
+    # PARALLEL_DATES=1 makes dispatch order directly observable. The
+    # candidate at exactly today + FULL_RETRY_HORIZON_DAYS falls in the
+    # boundary priority zone and must be dispatched before every earlier,
+    # nearer-term candidate.
+    monkeypatch.setattr(main, "PARALLEL_DATES", 1)
+    near = [date(2026, 9, 8), date(2026, 9, 10), date(2026, 9, 11)]
+    boundary_date = TERM_TIME_DAY + datetime_module.timedelta(
+        days=main.FULL_RETRY_HORIZON_DAYS
+    )
+    all_dates = near + [boundary_date]
+    monkeypatch.setattr(main.term_dates, "checkable_dates", lambda start, end: all_dates)
+    fetch_calls = _install_fake_scraper(monkeypatch, {d: _raw() for d in all_dates})
+
+    result = main.main(today=TERM_TIME_DAY)
+
+    assert result == 0
+    assert fetch_calls[0] == boundary_date
+    assert fetch_calls[1:] == near
+
+
+def test_boundary_zone_kill_switch_restores_ascending_order(monkeypatch):
+    # Companion to the test above: BOUNDARY_PRIORITY_ZONE_DAYS = 0 must
+    # disable the reordering entirely.
+    monkeypatch.setattr(main, "PARALLEL_DATES", 1)
+    monkeypatch.setattr(main, "BOUNDARY_PRIORITY_ZONE_DAYS", 0)
+    near = [date(2026, 9, 8), date(2026, 9, 10), date(2026, 9, 11)]
+    boundary_date = TERM_TIME_DAY + datetime_module.timedelta(
+        days=main.FULL_RETRY_HORIZON_DAYS
+    )
+    all_dates = near + [boundary_date]
+    monkeypatch.setattr(main.term_dates, "checkable_dates", lambda start, end: all_dates)
+    fetch_calls = _install_fake_scraper(monkeypatch, {d: _raw() for d in all_dates})
+
+    result = main.main(today=TERM_TIME_DAY)
+
+    assert result == 0
+    assert fetch_calls == all_dates
+
+
+def test_dispatch_never_exceeds_parallel_dates_in_flight(monkeypatch):
+    # Cheap invariant check: never more than PARALLEL_DATES concurrently
+    # in flight. Only asserts an upper bound, so it cannot flake.
+    monkeypatch.setattr(main, "PARALLEL_DATES", 3)
+    monkeypatch.setattr(main.config, "MAX_DATES", 12)
+
+    lock = threading.Lock()
+    counter = {"current": 0, "max": 0}
+
+    def _fake_fetch(travel_date, *, artifacts_dir=None, attempts=None):
+        with lock:
+            counter["current"] += 1
+            counter["max"] = max(counter["max"], counter["current"])
+        try:
+            return _raw()
+        finally:
+            with lock:
+                counter["current"] -= 1
+
+    monkeypatch.setattr(main.scraper, "fetch_journey_search", _fake_fetch)
+
+    result = main.main(today=TERM_TIME_DAY)
+
+    assert result == 0
+    assert counter["max"] <= 3
+
+
+# ---------------------------------------------------------------------------
+# _dispatch_order — pure function, no threads (docs/plans/003-scheduler-
+# and-retry-horizon.md §4.6/§8.4)
+# ---------------------------------------------------------------------------
+
+
+def test_dispatch_order_empty_list_is_empty():
+    assert main._dispatch_order([], date(2026, 1, 1)) == []
+
+
+def test_dispatch_order_single_candidate_returns_it():
+    d = date(2026, 1, 1)
+    assert main._dispatch_order([d], d) == [0]
+
+
+def test_dispatch_order_no_candidate_in_zone_is_ascending():
+    full_retry_until = date(2026, 12, 8)
+    candidates = [date(2026, 9, 8), date(2026, 9, 10)]
+
+    assert main._dispatch_order(candidates, full_retry_until) == [0, 1]
+
+
+def test_dispatch_order_latest_in_zone_dispatched_first():
+    full_retry_until = date(2026, 12, 8)
+    # zone_start = Dec 1; Dec 3 and Dec 8 both fall in the zone — the
+    # latest (Dec 8, index 2) wins and is moved to the front.
+    candidates = [
+        date(2026, 9, 8),
+        date(2026, 12, 3),
+        date(2026, 12, 8),
+        date(2026, 12, 15),
+    ]
+
+    assert main._dispatch_order(candidates, full_retry_until) == [2, 0, 1, 3]
+
+
+def test_dispatch_order_zone_disabled_is_ascending(monkeypatch):
+    monkeypatch.setattr(main, "BOUNDARY_PRIORITY_ZONE_DAYS", 0)
+    full_retry_until = date(2026, 12, 8)
+    candidates = [date(2026, 9, 8), date(2026, 12, 8)]
+
+    assert main._dispatch_order(candidates, full_retry_until) == [0, 1]
+
+
+def test_dispatch_order_is_always_a_permutation():
+    full_retry_until = date(2026, 12, 8)
+    candidates = [
+        date(2026, 9, 8),
+        date(2026, 12, 3),
+        date(2026, 12, 8),
+        date(2026, 12, 15),
+        date(2026, 12, 20),
+    ]
+
+    order = main._dispatch_order(candidates, full_retry_until)
+
+    assert sorted(order) == list(range(len(candidates)))
 
 
 # ---------------------------------------------------------------------------
@@ -640,12 +859,13 @@ def test_speculative_zone_dates_are_still_checked_and_logged(monkeypatch, _isola
     # still fetched, still written to price-history.csv, and still
     # alerts — the hard constraint in plan 002 §4.
     #
-    # 98 days out from TERM_TIME_DAY (early September) lands in mid
-    # December — outside BST — so, unlike other tests in this file, the
-    # journey's timestamps can't use _journey()/_iso()'s hardcoded
-    # +01:00 offset (that would shift 07:25 to 06:25 once converted to
-    # Europe/London and fail to match config.TARGET_DEPARTURES). Build
-    # the raw journey directly with the correct GMT (+00:00) offset.
+    # FULL_RETRY_HORIZON_DAYS + 1 (96) days out from TERM_TIME_DAY (early
+    # September) lands in mid December — outside BST — so, unlike other
+    # tests in this file, the journey's timestamps can't use
+    # _journey()/_iso()'s hardcoded +01:00 offset (that would shift 07:25
+    # to 06:25 once converted to Europe/London and fail to match
+    # config.TARGET_DEPARTURES). Build the raw journey directly with the
+    # correct GMT (+00:00) offset.
     speculative_date = TERM_TIME_DAY + datetime_module.timedelta(
         days=main.FULL_RETRY_HORIZON_DAYS + 1
     )

@@ -42,14 +42,16 @@ jobs:
     # Every remaining term-time Tue/Thu/Fri is checked on every run (see
     # plan §2.2) — still up to ~100+ dates early in a term (candidate-list
     # size is unchanged, see docs/plans/002-speed-up-price-check-run.md
-    # Decisions §1), scraped PARALLEL_DATES-at-a-time (see src/main.py)
-    # rather than one at a time. Per-date cost dropped sharply once the
-    # navigation/poll/backoff timings and per-date attempt count were
-    # tuned to measured values (see src/scraper.py and src/main.py's
+    # Decisions §1), scraped up to PARALLEL_DATES at once via a continuous
+    # scheduler (see src/main.py) rather than one at a time or in fixed
+    # batches. Per-date cost dropped sharply once the navigation/poll/
+    # backoff timings and per-date attempt count were tuned to measured
+    # values (see src/scraper.py and src/main.py's
     # FULL_RETRY_HORIZON_DAYS): a real scheduled run measured at 315s
-    # (5m15s) total before that change, projected at ~107s (1m47s) after
-    # — see docs/plans/002-speed-up-price-check-run.md §1 and §10. 20
-    # minutes keeps real headroom over that projection without leaving 45
+    # (5m15s) total before those changes, projected at roughly 1m50s-2m
+    # after — see docs/plans/002-speed-up-price-check-run.md §1/§10 and
+    # docs/plans/003-scheduler-and-retry-horizon.md §4.7/§11. 20 minutes
+    # keeps real headroom over that projection without leaving 18+
     # minutes of dead slack. A manual run defaults max_dates to 1, so it
     # normally finishes in well under a minute.
     timeout-minutes: 20
