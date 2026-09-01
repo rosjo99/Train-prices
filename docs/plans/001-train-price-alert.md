@@ -219,6 +219,273 @@ site Trainline was already rejected for, so the same conclusion
 applies without a separate cost/benefit case. NRE remains the only
 viable retailer.
 
+### 1.7 London Northwestern Railway investigated (2026-09-01) and rejected — also Trainline
+
+Same shape again: LNR's booking site
+(`buytickets.londonnorthwesternrailway.co.uk`) accepts the identical
+deep-link URL shape as §1.6's EMR one, just with `<carrier>` swapped
+in the hostname. Checked as a third possible additional source of
+dates.
+
+Result: rejected, immediately — it's the same Trainline white-label
+engine as EMR, not a separate investigation. The static HTML `curl`
+fetches (HTTP 200, 3/3 attempts) is served under
+`data-test="app-LondonNorthwesternRailwayWeb-LondonNorthwesternRailway"`,
+loads `js.datadome.co`/`static.trainlinecontent.com` exactly like
+EMR's did, and — stronger evidence than EMR's page alone — ships the
+*same webpack bundle filenames/hashes* as EMR's page
+(`app.010e8419aad13e9266b2.mjs`, `runtime~app.c126f6b8ef1209832b95.mjs`,
+`vendors.2a45cbf76fcf3d3d8ef1.mjs`), confirming EMR and LNR aren't
+just similarly built but are served from the shared Trainline
+white-label deployment. Confirmed live: headless Chromium gets
+`net::ERR_CONNECTION_RESET` on both the deep-link and the unrelated
+`www.londonnorthwesternrailway.co.uk` marketing homepage — same
+domain-wide block signature as §1.5/§1.6.
+
+Given the shared-infrastructure evidence, any other train operating
+company found serving from `buytickets.<operator>.co.uk` with this
+same page shape should be assumed Trainline/DataDome-protected without
+a full re-investigation — check for the `app-<Operator>Web-<Operator>`
+`data-test` marker and `js.datadome.co`/`static.trainlinecontent.com`
+references in the plain HTML (visible even via `curl`, no browser
+needed) before spending a live headless-browser probe on it. NRE
+remains the only viable retailer.
+
+### 1.8 Northern Railway checked (2026-09-01) and rejected via the §1.7 shortcut — no live browser probe needed
+
+Northern's booking site (`buytickets.northernrailway.co.uk`) also
+accepts the same deep-link shape. Applying §1.7's shortcut: a `curl`
+of the deep-link (HTTP 200) shows `data-test="app-NorthernRailwayWeb-NorthernRailway"`
+and the same `js.datadome.co`/`static.trainlinecontent.com` references
+and identical webpack bundle hashes
+(`app.010e8419aad13e9266b2.mjs`, `runtime~app.c126f6b8ef1209832b95.mjs`)
+as EMR's and LNR's pages. Same shared Trainline white-label
+deployment, rejected without a separate live headless-browser probe.
+NRE remains the only viable retailer.
+
+### 1.9 TransPennine Express investigated (2026-09-01) and rejected — different engine, still blocked
+
+TPE's booking site (`ticket.tpexpress.co.uk`, deep-link shape
+`https://ticket.tpexpress.co.uk/journeys-grid/<origin>/<destination>/<ISO8601>//1//<railcard>x1?departNow=no&realTime=no&searchPreferences=&showAdditionalRoutes=no&showCheapest=no&tocSpecific=no`)
+is a genuinely different booking engine from §1.6-1.8's Trainline
+white-label sites — its static HTML carries no DataDome or
+`trainlinecontent.com` reference, just a page titled "Booking Engine"
+loading `otrl.io`/`roeye.com`/Salesforce-hosted assets, and the only
+"captcha"/"cloudflare" string matches in the page are a payment-page
+`googleRecaptchaKey` and a `cdnjs.cloudflare.com` CDN script tag —
+neither is bot protection on the search page itself. `curl` against
+the deep-link gets a clean HTTP 200 with real page content, 3/3
+attempts.
+
+Result: still rejected. Headless Chromium via Playwright gets
+`net::ERR_CONNECTION_RESET` on the deep-link (reproduced twice) and
+again on both `www.tpexpress.co.uk` and the bare `ticket.tpexpress.co.uk`
+root — domain-wide, same signature as §1.5-1.8 (outbound proxy's own
+status log confirms the far side closing the tunnel mid-handshake:
+39 bytes received, mid-handshake, matching `curl`'s clean success on
+the exact same URL from the same environment). The specific
+bot-protection vendor here is unconfirmed — no vendor script/marker
+appears in the static HTML the way DataDome's or Cloudflare's do
+elsewhere, so this is presumably a connection-level fingerprint check
+(TLS/HTTP2 client fingerprinting, e.g. Akamai/AWS WAF Bot
+Control/PerimeterX-style) that never lets a detected headless browser
+far enough to load any page content, JS included. Whatever the vendor,
+the practical outcome is identical to every other retailer checked so
+far: `curl` (no browser) gets through, this project's actual
+Playwright-based scraper does not.
+
+This confirms the connection-level block pattern isn't limited to the
+two vendors already identified (Cloudflare, DataDome) — worth treating
+as the default expectation for any UK train retailer's booking engine
+that isn't NRE, rather than assuming a new one is safe until proven
+otherwise. NRE remains the only viable retailer.
+
+**2026-09-01 follow-up — why a browser is needed at all, and why
+switching engines doesn't help:** TPE's page (like NRE's) is a
+client-rendered SPA — the raw HTML `curl` fetches contains no fare
+data, only a JS shell that reads config values
+(`apiHost:"api.tpexpress.co.uk"`, an `apiAccessToken`) and, per the
+downloaded JS bundle
+(`/js/common.<hash>.js`), calls that API with headers
+`x-access-token: <apiAccessToken>` and `x-trace-token:
+<name>@<version>/<generated-id>`. This API host is *not*
+connection-blocked the way the booking-engine hostnames are — plain
+`curl` against `https://api.tpexpress.co.uk/` gets a real HTTP
+response (403 without the token, 503 for a guessed
+`/journeys-grid/...` path with it), unlike the domain-wide resets
+elsewhere in this section. That's a live, reachable API, not another
+dead end — but reproducing its real request from the JS bundle's
+minified source, without being able to observe an actual browser
+making the call, only got guesses (wrong path shape, missing
+signature/session parameters), never real fare data.
+
+Tested whether the *browser itself* was the avoidable part: Playwright
+Firefox (headless) against the same deep-link — 5 automatic retries,
+each independently reset after ~6s (confirmed via the outbound proxy's
+own status log), same signature as Chromium. Headed (non-headless)
+Chromium under Xvfb, same deep-link — also `net::ERR_CONNECTION_RESET`.
+So the block is neither Chromium-specific nor headless-specific: every
+Playwright-launched browser tried is blocked identically, while `curl`
+from the same environment is not. The most likely explanation is a
+TLS/HTTP2 connection fingerprint (JA3/JA4-style) specific to
+Playwright's bundled browser builds, checked before any page content
+or JS loads — a known class of technique several bot-management
+vendors use specifically because it catches automation frameworks
+regardless of which browser engine or headless mode they drive.
+Working around a fingerprint check like this would mean TLS
+fingerprint spoofing (e.g. `curl_cffi`-style impersonation, a
+patched/rebuilt browser, or a MITM proxy that rewrites the TLS
+handshake) — squarely the kind of stealth tooling CLAUDE.md's standing
+"no proxies, stealth plugins, or CAPTCHA-solving" decision already
+rules out, not a new gap to close. NRE remains the only viable
+retailer.
+
+### 1.10 West Midlands Railway checked (2026-09-01) and rejected via the §1.7 shortcut
+
+West Midlands Railway's booking site
+(`buytickets.westmidlandsrailway.co.uk`) also accepts the same
+deep-link shape. Applying §1.7's shortcut: a `curl` of the deep-link
+(HTTP 200) shows `data-test="app-WestMidlandsRailwayWeb-WestMidlandsRailway"`
+and the same `js.datadome.co`/`static.trainlinecontent.com` references
+and identical webpack bundle hashes
+(`app.010e8419aad13e9266b2.mjs`, `runtime~app.c126f6b8ef1209832b95.mjs`)
+as EMR's, LNR's, and Northern's pages. Same shared Trainline
+white-label deployment, rejected without a separate live
+headless-browser probe. NRE remains the only viable retailer.
+
+### 1.11 TrainPal investigated (2026-09-01) and rejected — confirmed Akamai JA4 fingerprinting
+
+TrainPal (`www.mytrainpal.com`, deep-link shape
+`https://www.mytrainpal.com/train-tickets?fromStationDetail[...]=...&toStationDetail[...]=...&outwardDate=<ISO8601>&railcards[value][0][Code]=YNG&...`)
+is a Trip.com Group property (Next.js app, `apigateway.mytrainpal.com`,
+`tripcdn.com` assets) — a third distinct booking engine from Trainline
+and TPE's. `curl` against the deep-link gets a clean HTTP 200, 3/3
+attempts, with real page markup (~150KB) — but no actual fare data;
+like NRE and TPE it's a client-rendered shell reading real journeys
+via a separate API call after JS runs.
+
+The static HTML itself supplied stronger evidence than any prior
+retailer here: an embedded telemetry beacon URL in the page (Trip.com's
+own APM/crash-reporting config, `crash.trip.com/mcd_crash_server/...`)
+echoes back our own request's headers as logged context, including
+`req[headers][akamai_ja4_fp]=t13d3012h2_1d37bd780c83_b26ce05bbdd6` and
+`req[headers][x-via]=akamai` — direct, first-party confirmation that
+this site sits behind **Akamai** with **JA4 TLS fingerprinting**
+active on incoming connections (not inferred from the block behaviour
+the way it was for TPE in §1.9 — Trip.com's own logging says so).
+
+Result: rejected, same signature as every retailer since §1.5. Headless
+Chromium via Playwright gets `net::ERR_CONNECTION_RESET` on both the
+deep-link and the unrelated `www.mytrainpal.com` homepage — domain-wide
+— confirmed via the outbound proxy's own status log (far side closing
+the tunnel mid-handshake, matching `curl`'s clean success on the exact
+same URL). This is the first retailer investigated where the
+connection-level-fingerprint hypothesis from §1.9's TPE follow-up is
+confirmed by the target site's own embedded diagnostics rather than
+inferred — good supporting evidence that Akamai/JA4-style TLS
+fingerprinting, not any single vendor's JS challenge, is the common
+mechanism behind every rejection since CrossCountry. NRE remains the
+only viable retailer.
+
+### 1.12 Rail Europe investigated (2026-09-01) and rejected — blocked outright, no browser probe needed
+
+Rail Europe (`www.raileurope.com`, deep-link shape
+`https://www.raileurope.com/en/journey/<origin-slug>-<destination-slug>-<journeyId>?currency=GBP`)
+is the first retailer since Trainline itself where `curl` alone is
+enough to confirm rejection — no headless-browser probe needed to
+reach a verdict. `curl` against the deep-link gets HTTP 403, 3/3
+attempts, with response headers `x-datadome: protected`,
+`server: cloudflare`, and a `datadome` cookie, and a body that is an
+explicit DataDome CAPTCHA interstitial ("Please enable JS and disable
+any ad blocker", loading `geo.captcha-delivery.com`/
+`ct.captcha-delivery.com`) rather than any real page content. This is
+the same DataDome product blocking Trainline in §1.1-1.3, just fronted
+by Cloudflare and configured to challenge even a plain, unauthenticated
+`curl` request rather than only automated browsers — stricter than
+every other retailer investigated in this section, all of which let
+plain `curl` through. NRE remains the only viable retailer.
+
+### 1.13 Trip.com checked (2026-09-01) and rejected — same Trip.com Group platform as TrainPal
+
+Trip.com's own UK rail search (`uk.trip.com`, deep-link shape
+`https://uk.trip.com/trains/list?departurecitycode=<code>&arrivalcitycode=<code>&departdate=<YYYY-MM-DD>&departhouript=<HH>&departminuteipt=<MM>&scheduleType=single&railcards={"YNG":1}&...`)
+is not a fourth new engine — it's the same Trip.com Group platform as
+§1.11's TrainPal, confirmed by the same infrastructure signals in the
+plain HTML: `data-cargo="...,group:Trip,..."`, `tripcdn.com` asset
+hosts, the identical `crash.trip.com/mcd_crash_server/...` telemetry
+endpoint format, and the same `akamai_ja4_fp` marker in its embedded
+diagnostics. Still ran a live confirmation rather than relying on the
+shared-infrastructure inference alone: headless Chromium gets
+`net::ERR_CONNECTION_RESET` on both the deep-link and the bare
+`uk.trip.com` homepage, domain-wide — same Akamai/JA4 signature as
+TrainPal, confirmed via the outbound proxy's own status log. NRE
+remains the only viable retailer.
+
+### 1.14 Klook investigated (2026-09-01) and rejected — blocked outright, same pattern as Rail Europe
+
+Klook (`www.klook.com`, deep-link shape
+`https://www.klook.com/en-GB/rails-4/<region>/search/?origin_position=<uuid>&destination_position=<uuid>&departure_date=<YYYY-MM-DD>&departure_time=<HH:MM>&passengers=<JSON>&...`)
+— better known as an activities/attractions OTA, also selling UK rail
+tickets — is rejected the same way as §1.12's Rail Europe: `curl`
+alone settles it, no browser probe needed. `curl` against the deep-link
+gets HTTP 403, 3/3 attempts, with `x-datadome: protected`, a `datadome`
+cookie, `server: cloudflare`, and a body that is the identical DataDome
+CAPTCHA interstitial template seen on Rail Europe ("Please enable JS
+and disable any ad blocker", loading `geo.captcha-delivery.com`) — down
+to matching page structure, just a different embedded config blob.
+Same DataDome-behind-Cloudflare configuration, challenging plain `curl`
+outright rather than only automated browsers. NRE remains the only
+viable retailer.
+
+### 1.15 Omio investigated (2026-09-01) and rejected — blocked outright, Cloudflare interactive challenge
+
+Omio (`www.omio.co.uk`, deep-link shape
+`https://www.omio.co.uk/app/search-frontend/results/<searchId>/train?locale=en-GB&origin_domain=co.uk`)
+— a major European multi-modal travel metasearch site — is rejected
+the same way as §1.12/§1.14 (Rail Europe, Klook): `curl` alone
+settles it, no browser probe needed. `curl` against the deep-link gets
+HTTP 403, 3/3 attempts, `server: cloudflare`, `cf-mitigated: challenge`,
+and a body titled "Just a moment..." with a CSP allowing
+`challenges.cloudflare.com` — Cloudflare's interactive JS
+challenge/Turnstile page, not the static "Attention Required" block
+page §1.5's CrossCountry got. A third distinct block *presentation*
+(DataDome CAPTCHA for Rail Europe/Klook, Cloudflare's interactive
+challenge here, Cloudflare's static block for CrossCountry) but the
+same practical outcome: rejected before any real page content loads,
+confirmed without needing a browser at all. NRE remains the only
+viable retailer.
+
+### 1.16 Grand Central investigated (2026-09-01) and rejected — no visible vendor, still blocked
+
+Grand Central (`buy.grandcentralrail.com`, deep-link shape
+`https://buy.grandcentralrail.com/search?origin=<CRS-prefixed-code>&destination=<CRS-prefixed-code>&adults=1&children=0&outboundTime=<ISO8601>&outboundTimeType=DEPARTURE&railcards=<JSON>`)
+uses the exact same deep-link shape as §1.5's CrossCountry — expected,
+since both are Arriva UK Trains operators. Unlike CrossCountry, though,
+this one looked genuinely promising on first inspection: `curl` gets a
+clean HTTP 200, 3/3 attempts, `server: AmazonS3` (a static site, not
+obviously fronted by Cloudflare/Akamai/DataDome — no bot-vendor marker
+anywhere in the response headers or body), and its Content-Security-Policy
+allow-lists `ojp.nationalrail.co.uk` — National Rail's own Open Journey
+Planner API — suggesting the frontend might call NRE's own
+infrastructure directly.
+
+Result: still rejected. Headless Chromium gets `net::ERR_CONNECTION_RESET`
+on the deep-link (reproduced twice) and again on both
+`www.grandcentralrail.com` and the bare `buy.grandcentralrail.com` root
+— domain-wide, confirmed via the outbound proxy's own status log (same
+signature as every prior rejection: tunnel closed mid-handshake, 39
+bytes received). So the "no visible vendor" reading from the static
+HTML doesn't mean unprotected — same conclusion as §1.9's TPExpress:
+some UK retailers' bot protection operates at the TLS/connection level
+without leaving any marker in page content for `curl` to see. The
+`ojp.nationalrail.co.uk` CSP entry remains an interesting unconfirmed
+lead (OJP is NRE's own official journey-planning API, distinct from the
+`jpservices.nationalrail.co.uk` endpoint this project's scraper already
+uses) but isn't something this investigation could act on — the search
+page itself never loads far enough to observe what it actually calls.
+NRE (via the existing `jpservices` endpoint) remains the only viable
+retailer.
+
 ---
 
 ## 2. Decisions not already in CLAUDE.md
