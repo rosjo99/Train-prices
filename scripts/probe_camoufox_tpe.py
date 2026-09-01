@@ -1,4 +1,3 @@
-```python
 """Diagnostic: can Camoufox reach TPE pages?
 
 This probe intentionally uses Camoufox rather than Playwright Chromium.
@@ -651,5 +650,5 @@ def main() -> int:
 
 if __name__ == "__main__":
     sys.exit(main())
-```
+
 
