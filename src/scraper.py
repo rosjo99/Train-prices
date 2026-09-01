@@ -55,13 +55,23 @@ USER_AGENT = (
     "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 )
 
-# Overall per-attempt budget: how long we'll wait, after navigation, for
-# either the journey-planner XHR to fire or the results DOM to render.
-# Monkeypatch this module attribute in tests instead of actually waiting.
-# Every probe run's XHR arrived within a few seconds, so 20s already
-# leaves generous headroom over the observed happy path while roughly
-# halving the worst-case per-attempt wait versus the original 45s.
-PAGE_BUDGET_SECONDS: float = 20.0
+# Timeout for page.goto itself (navigation only — not the post-navigation
+# wait for results, see PAGE_BUDGET_SECONDS below). Kept separate so the
+# poll budget can be tuned independently of how long we'll wait for the
+# page to even finish loading.
+NAVIGATION_TIMEOUT_SECONDS: float = 20.0
+
+# Post-navigation poll deadline: how long we'll wait, after navigation,
+# for either the journey-planner XHR to fire or the results DOM to
+# render. Monkeypatch this module attribute in tests instead of actually
+# waiting. Every observed successful attempt captured the XHR ~2.4s after
+# navigation settled (2026-09-03 attempt 1: 2.36s; 2026-09-04 attempt 2:
+# 2.40s), and the failure mode is binary, not slow — 2026-09-04's first
+# attempt sat the full 20s with no XHR, then the very next attempt got
+# one in 2.4s. Waiting past ~10s has never once converted a failure into
+# a success, so 10s keeps ~4x headroom over the observed happy path
+# without paying for the old 20s on every doomed date.
+PAGE_BUDGET_SECONDS: float = 10.0
 
 # How long to pause the polling loop between checks, in milliseconds,
 # passed to Page.wait_for_timeout (a no-op wait in fake pages used by
@@ -69,8 +79,12 @@ PAGE_BUDGET_SECONDS: float = 20.0
 POLL_INTERVAL_MS = 250
 
 # Retry backoff, in seconds, indexed by (attempt number - 1), clamped to
-# the last entry for any further attempts.
-RETRY_BACKOFF_SECONDS: tuple[int, ...] = (10, 20)
+# the last entry for any further attempts. The one observed recovery
+# (2026-09-04: attempt 1 failed, attempt 2 succeeded) came from a fresh
+# browser context on the very next attempt, not from having waited 10s —
+# but this is still an unattended job hitting someone else's site, so a
+# real (if shorter) backoff stays rather than going to zero.
+RETRY_BACKOFF_SECONDS: tuple[int, ...] = (5, 10)
 
 # Defense-in-depth block markers, checked against page URL/content. NRE
 # itself has never shown any of these (confirmed "none" on every probe
@@ -487,7 +501,7 @@ def _attempt_once(travel_date: date, *, artifacts_dir: Path | None) -> dict[str,
                 page.goto(
                     url,
                     wait_until="domcontentloaded",
-                    timeout=PAGE_BUDGET_SECONDS * 1000,
+                    timeout=NAVIGATION_TIMEOUT_SECONDS * 1000,
                 )
             except PlaywrightTimeoutError as exc:
                 raise TimeoutScrapeError(f"navigation timed out: {exc}") from exc
