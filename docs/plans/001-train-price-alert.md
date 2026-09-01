@@ -183,7 +183,7 @@ This is the same category of blocker Trainline was rejected for in
 traffic), just a different vendor (Cloudflare here vs. DataDome for
 Trainline) and a harder failure mode (connection-level reset vs. a
 CAPTCHA page). Per this project's standing decision to use no proxies,
-stealth plugins, or CAPTCHA-solving (CLAUDE.md's Tech decisions), there
+browser-fingerprint evasion, or CAPTCHA-solving (CLAUDE.md's Tech decisions), there
 is no further mitigation to try within the project's own constraints.
 NRE remains the only viable retailer for this project; CrossCountry is
 not a source of additional dates.
@@ -332,13 +332,12 @@ Playwright's bundled browser builds, checked before any page content
 or JS loads — a known class of technique several bot-management
 vendors use specifically because it catches automation frameworks
 regardless of which browser engine or headless mode they drive.
-Working around a fingerprint check like this would mean TLS
-fingerprint spoofing (e.g. `curl_cffi`-style impersonation, a
-patched/rebuilt browser, or a MITM proxy that rewrites the TLS
-handshake) — squarely the kind of stealth tooling CLAUDE.md's standing
-"no proxies, stealth plugins, or CAPTCHA-solving" decision already
-rules out, not a new gap to close. NRE remains the only viable
-retailer.
+Working around a fingerprint check like this would mean impersonating
+a different TLS client (e.g. a patched/rebuilt browser, or a proxy
+that rewrites the TLS handshake) — squarely the kind of workaround
+CLAUDE.md's standing "no proxies, browser-fingerprint evasion, or
+CAPTCHA-solving" decision already rules out, not a new gap to close.
+NRE remains the only viable retailer.
 
 ### 1.10 West Midlands Railway checked (2026-09-01) and rejected via the §1.7 shortcut
 
@@ -640,7 +639,7 @@ in `tests/test_scraper.py` replays a `/fare-info` response arriving after
 the real one and asserts the real journey data still wins.
 
 **Standing instruction:** if NRE starts blocking Playwright, stop and
-report — do not add proxies, CAPTCHA solvers, or stealth plugins, since
+report — do not add proxies, CAPTCHA solvers, or browser-fingerprint evasion, since
 that would be new, unexpected behaviour from a site with no bot
 protection at any point in this project's testing, worth investigating
 before working around. (Repeated in §5's review checklist.)
@@ -810,6 +809,6 @@ Do not implement these without a new plan:
    "tomorrow" in London for part of the year — a real trap for naive
    datetime handling.
 10. If NRE starts blocking, stop and report — do not add proxies,
-    CAPTCHA solvers, or stealth plugins.
+    CAPTCHA solvers, or browser-fingerprint evasion.
 11. `price-history.csv` is append-only — no code path should ever
     truncate or rewrite its existing rows.

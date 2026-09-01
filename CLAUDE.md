@@ -67,7 +67,7 @@ got here.
   own diagnostics rather than inferred, and good evidence this is the
   common mechanism (not any single vendor's JS challenge) behind every
   rejection since CrossCountry. None of this is fixable
-  without TLS fingerprint spoofing, which is stealth tooling this
+  without impersonating a different TLS client, which this
   project's standing decision already rules out. The exception to
   "curl gets through": Rail Europe (`www.raileurope.com`), Klook
   (`www.klook.com`) — the same DataDome product blocking Trainline,
@@ -99,7 +99,7 @@ got here.
   guards against the ad-redirect as defense in depth (blocks
   cross-origin iframes, backstops navigation away from
   `nationalrail.co.uk`) even though the deep-link itself never triggers
-  it. No proxies, stealth plugins, or CAPTCHA-solving — not needed.
+  it. No proxies, browser-fingerprint evasion, or CAPTCHA-solving — not needed.
 - **Term-date logic:** plain Python module `src/term_dates.py` — a
   commented `TERMS` data block (term name, inclusive start/end, excluded
   ranges/days) plus pure functions `is_in_term()`, `is_checkable_day()`,
