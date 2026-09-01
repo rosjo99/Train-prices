@@ -7,6 +7,15 @@ travel dates that are a Tuesday, Thursday or Friday inside school term
 time. See `CLAUDE.md` and `docs/plans/001-train-price-alert.md` for the
 full design and the discovery process behind it.
 
+The alert email itself is styled to match the booked-dates website below
+and shows two tables: dates currently under £10 that aren't booked yet
+(the reason the email was sent), and — for information only, never a
+reason to email — dates already booked, with their current prices. Each
+train's price links straight through to a bookable National Rail
+Enquiries search, and a muted second line under each price shows that
+train's arrival time and flags it if it isn't a direct journey. See
+`docs/plans/004-redesign-alert-email.md` for the full design.
+
 ## Marking a date as already booked
 
 Once you've booked a ticket for a date, tell the tool so it stops

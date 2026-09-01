@@ -134,7 +134,19 @@ is still checked and logged, just never alerted on.
   owner's own address, so sending to more than one recipient — or to any
   recipient other than the account owner — requires verifying a domain
   in Resend first and setting `ALERT_EMAIL_FROM` to an address on it
-  (see README.md's "Sending to more than one address").
+  (see README.md's "Sending to more than one address"). The alert email
+  itself renders two site-styled tables — "under £10, not booked yet"
+  and "already booked, current prices" — matching `site/`'s palette and
+  per-date row shape, with each departure's price, arrival time and
+  direct/changes status packed into that departure's own cell (see
+  `docs/plans/004-redesign-alert-email.md`). The send trigger is
+  unchanged by this: an email still goes out only when `evaluate()`
+  finds at least one unbooked fare below threshold (or the `TEST_RUN`
+  fallback fires); the two tables are a presentation-layer change over
+  that same decision. `src/notifier.py`'s HTML is built entirely from
+  inline `style=` attributes with no `<style>` block anywhere, by
+  design — several email clients (Gmail mobile web among them) strip
+  `<head><style>`, so nothing the design depends on may live there.
 - **Secrets:** GitHub Actions repository secrets `RESEND_API_KEY`,
   `ALERT_EMAIL_TO`, and optional `ALERT_EMAIL_FROM`, injected as step
   `env:` vars. Never committed, never logged; the secrets dataclass
@@ -159,7 +171,10 @@ is still checked and logged, just never alerted on.
   sub-£10 fare because its railcard discount specifically couldn't be
   confirmed is a worse outcome than the reverse). Whether the discount
   was confirmed is still tracked as `railcard_applied` and shown in both
-  the email and `price-history.csv`, purely as information.
+  the email and `price-history.csv`, purely as information — in the
+  email, as a muted `*` appended to that departure's price plus a legend
+  line, shown only when at least one displayed fare's discount wasn't
+  confirmed (see `docs/plans/004-redesign-alert-email.md` §4.6.4).
 
 ## Which dates get checked
 The gate applies to **travel dates**, not the day the job happens to run.
