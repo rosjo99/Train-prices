@@ -57,13 +57,16 @@ got here.
   by an unidentified connection-level bot check (confirmed
   browser-agnostic, not Chromium- or headless-specific — Firefox and
   headed Chromium were also blocked, see §1.9's follow-up); and
-  TrainPal (`www.mytrainpal.com`, a Trip.com Group property) — its own
-  embedded telemetry (a request-echoing beacon URL in the static page)
-  directly confirms **Akamai with JA4 TLS fingerprinting**, the first
-  retailer here where the connection-level fingerprint is confirmed by
-  the target's own diagnostics rather than inferred, and good evidence
-  this is the common mechanism (not any single vendor's JS challenge)
-  behind every rejection since CrossCountry. None of this is fixable
+  TrainPal (`www.mytrainpal.com`) and Trip.com's own UK rail search
+  (`uk.trip.com`) — both the same Trip.com Group platform (shared
+  `tripcdn.com` assets, `crash.trip.com` telemetry endpoint,
+  `group:Trip`/`group:MyTrainPal` markers), whose embedded telemetry (a
+  request-echoing beacon URL in the static page) directly confirms
+  **Akamai with JA4 TLS fingerprinting**, the first retailer pair here
+  where the connection-level fingerprint is confirmed by the target's
+  own diagnostics rather than inferred, and good evidence this is the
+  common mechanism (not any single vendor's JS challenge) behind every
+  rejection since CrossCountry. None of this is fixable
   without TLS fingerprint spoofing, which is stealth tooling this
   project's standing decision already rules out. The exception to
   "curl gets through": Rail Europe (`www.raileurope.com`) — the same
@@ -73,7 +76,7 @@ got here.
   automated browsers, so no browser probe was needed to reach a
   verdict there. NRE has no bot protection at all (confirmed via 20+
   live probe runs). See `docs/plans/001-train-price-alert.md`
-  §1.4/§1.5/§1.6/§1.7/§1.8/§1.9/§1.10/§1.11/§1.12/§2.2.
+  §1.4/§1.5/§1.6/§1.7/§1.8/§1.9/§1.10/§1.11/§1.12/§1.13/§2.2.
 - **Scraping approach:** Playwright (sync API), headless Chromium,
   navigating straight to a fully-parameterised deep-link URL —
   `https://www.nationalrail.co.uk/journey-planner/?type=single&origin=OXF&destination=PAD&leavingType=departing&leavingDate=DDMMYY&leavingHour=HH&leavingMin=MM&adults=1&railcards=YNG%7C1&extraTime=0`

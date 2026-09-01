@@ -405,6 +405,22 @@ by Cloudflare and configured to challenge even a plain, unauthenticated
 every other retailer investigated in this section, all of which let
 plain `curl` through. NRE remains the only viable retailer.
 
+### 1.13 Trip.com checked (2026-09-01) and rejected — same Trip.com Group platform as TrainPal
+
+Trip.com's own UK rail search (`uk.trip.com`, deep-link shape
+`https://uk.trip.com/trains/list?departurecitycode=<code>&arrivalcitycode=<code>&departdate=<YYYY-MM-DD>&departhouript=<HH>&departminuteipt=<MM>&scheduleType=single&railcards={"YNG":1}&...`)
+is not a fourth new engine — it's the same Trip.com Group platform as
+§1.11's TrainPal, confirmed by the same infrastructure signals in the
+plain HTML: `data-cargo="...,group:Trip,..."`, `tripcdn.com` asset
+hosts, the identical `crash.trip.com/mcd_crash_server/...` telemetry
+endpoint format, and the same `akamai_ja4_fp` marker in its embedded
+diagnostics. Still ran a live confirmation rather than relying on the
+shared-infrastructure inference alone: headless Chromium gets
+`net::ERR_CONNECTION_RESET` on both the deep-link and the bare
+`uk.trip.com` homepage, domain-wide — same Akamai/JA4 signature as
+TrainPal, confirmed via the outbound proxy's own status log. NRE
+remains the only viable retailer.
+
 ---
 
 ## 2. Decisions not already in CLAUDE.md
