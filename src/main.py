@@ -47,38 +47,45 @@ PARALLEL_DATES = 8
 #
 # The 94-day figure this constant used to be based on (measured three
 # times, zero drift — docs/plans/003-scheduler-and-retry-horizon.md §1.1)
-# was National Rail Enquiries' fare-release horizon specifically. It says
+# was National Rail Enquiries' fare-release horizon specifically. It said
 # nothing about TransPennine Express, the retailer this repo now scrapes
-# (docs/plans/005-migrate-to-tpe.md) — nobody has measured TPE's release
-# horizon from this codebase. The only evidence available about it is the
-# user's own domain knowledge of the retailer (stated 2026-09-01, during
-# the TPE migration): TPE is understood to sell tickets many months
-# further ahead than NRE's ~94-day window. That's a person's knowledge of
-# the retailer, not a live measurement this repo has made, and is treated
-# accordingly — as a deliberately generous placeholder, not a finding.
+# (docs/plans/005-migrate-to-tpe.md), and a 400-day placeholder was used
+# in its place while that was unknown (see that plan's §7.1 for the
+# original reasoning, kept as a historical record).
 #
-# So this constant is set past every candidate date any run this school
-# year can produce (term_dates.LAST_KNOWN_DATE is currently Thu 8 Jul
-# 2027, ~310 days from 2026-09-01): 400 is a plain, human-editable
-# integer chosen to comfortably clear that without being a computed
-# expression that would silently drift when LAST_KNOWN_DATE is next
-# updated. This suspends the speculative-single-attempt optimisation
-# below rather than guessing at a new precise TPE number — SPECULATIVE_
-# ATTEMPTS and the speculative-zone code path are NOT removed, they're
-# just dormant until a real TPE horizon is measured (docs/plans/005-
-# migrate-to-tpe.md §7.1/§9), at which point re-arming them is a one-
-# constant change back to something close to the measured value plus a
-# day of margin, exactly like plan 003 did for NRE.
+# That placeholder has since been replaced with a real, if still
+# un-measured-by-this-codebase, number: Great Western Railway (GWR) is
+# the train operating company that actually sets fares on this Oxford→
+# Paddington route — every fare object in the captured TPE fixture has
+# its "setter" field pointing at /data/tocs/GW, not TPE itself. Per the
+# user's own domain knowledge of GWR (stated 2026-09-01, day of merge —
+# see docs/plans/005-migrate-to-tpe.md §7.1's addendum), GWR releases
+# weekday advance tickets up to 24 weeks (168 days) ahead. That's a
+# person's stated knowledge of the operator, not a live measurement this
+# repo has made, and is treated accordingly — a considered estimate, not
+# a finding — but it is far more precise than the "many months further
+# out" guess 400 was based on, so 168 replaces it here.
 #
-# Widening this from 95 costs wall-clock time only, and only if TPE's
-# real horizon turns out to be closer than believed: a doomed far-out
-# date would get 3 attempts instead of 1. MAX_CONSECUTIVE_FAILURES below
-# is what bounds that cost — it's the reactive backstop for exactly this
-# assumption being wrong, and remains untouched. This constant affects
+# Unlike the old placeholder, 168 days is comfortably *inside* the
+# candidate range a run this school year can produce (term_dates.
+# LAST_KNOWN_DATE is currently Thu 8 Jul 2027, ~310 days from
+# 2026-09-01), so this reactivates the machinery the 400-day value had
+# put to sleep: dates beyond 168 days out now get demoted to
+# SPECULATIVE_ATTEMPTS (a single attempt) instead of the full 3, and the
+# boundary-priority dispatch (_dispatch_order / BOUNDARY_PRIORITY_ZONE_
+# DAYS) now has a real boundary partway through the candidate range to
+# prioritise, instead of being a no-op past the end of every run's
+# candidate list.
+#
+# If 168 turns out wrong (too close, i.e. GWR's real horizon is nearer
+# than believed, or TPE just has a bad day), MAX_CONSECUTIVE_FAILURES
+# below remains the reactive backstop, unchanged — a run failing on a
+# stretch of far-out dates will still stop early rather than burning
+# retry budget on every remaining candidate date. This constant affects
 # attempt count only — it is not a cap on which dates get checked;
 # MAX_CONSECUTIVE_FAILURES and term_dates.LAST_KNOWN_DATE are what bound
 # that.
-FULL_RETRY_HORIZON_DAYS = 400
+FULL_RETRY_HORIZON_DAYS = 168
 
 # How many attempts a date beyond FULL_RETRY_HORIZON_DAYS gets. It's still
 # fetched, parsed, logged, and eligible to alert — just with one attempt
@@ -88,9 +95,9 @@ FULL_RETRY_HORIZON_DAYS = 400
 SPECULATIVE_ATTEMPTS = 1
 
 # Reactive backstop for when the static FULL_RETRY_HORIZON_DAYS assumption
-# turns out wrong for a given run (TPE having a bad day, or its actual
-# release horizon being closer than the widened 400-day placeholder
-# above assumes). Once
+# turns out wrong for a given run (TPE/GWR having a bad day, or the real
+# fare-release horizon being closer than the 168-day estimate above
+# assumes). Once
 # this many dates in a row fail, stop submitting any further dates rather
 # than spending retry budget on every remaining date of the school year.
 # Counted strictly in ascending travel-date order on the main thread as
