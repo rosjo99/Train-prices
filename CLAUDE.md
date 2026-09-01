@@ -213,3 +213,34 @@ holidays), no checks should run at all.
 ## Plans
 - `docs/plans/001-train-price-alert.md` — full implementation plan,
   research findings, and the seven task specs.
+
+## Claude Code workflow: use this repo's sub-agents
+
+This repo defines four sub-agents in `.claude/agents/` — `planner`,
+`coder`, `reviewer`, `scout`. For any substantive change in this repo (a
+real feature, bug fix, or refactor — not a one-line edit, a doc typo, or
+just answering a question about the code), route the work through them
+rather than doing it all directly in the main conversation:
+
+1. **`planner`** first, for any design decision, multi-step
+   implementation plan, or task decomposition — before any code is
+   written. Give it the goal and relevant context; it does not implement.
+2. **`coder`** to implement, once there's a plan (from `planner`, or
+   from the user directly for something simple enough not to need one).
+   Hand it the plan/spec, not just the original goal — it doesn't make
+   architectural decisions itself.
+3. **`reviewer`** after implementation, to check the diff for bugs,
+   security issues, and adherence to the plan before calling the work
+   done.
+4. **`scout`** for lightweight research along the way — checking docs,
+   finding where something is defined, reading a handful of files — used
+   in place of doing that search directly, whenever it doesn't need deep
+   reasoning to interpret.
+
+This is a standing instruction, not a one-off: treat it as the user
+having explicitly asked for these named agents on every matching task in
+this repo, current session included, so it applies without having to be
+repeated. It doesn't relax any other rule about when to check with the
+user first (risky/irreversible actions, ambiguous requirements, etc.) —
+it only says who does the reading/writing/reviewing once the actual
+approach is decided.
