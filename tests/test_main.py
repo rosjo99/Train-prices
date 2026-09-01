@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from src import config, main, notifier, scraper
-from src.models import AlertMatch, TrainOption
+from src.models import TrainOption
 
 FAKE_SECRETS = config.Secrets(
     resend_api_key="re_test_key",
@@ -95,8 +95,16 @@ def _install_fake_scraper(monkeypatch: pytest.MonkeyPatch, results_by_date: dict
 def _install_fake_notifier(monkeypatch: pytest.MonkeyPatch, raise_exc: Exception | None = None) -> list[dict]:
     calls: list[dict] = []
 
-    def _fake_send_alert(matches, secrets, *, dry_run=False):
-        calls.append({"matches": matches, "secrets": secrets, "dry_run": dry_run})
+    def _fake_send_alert(cheap_rows, secrets, *, booked_rows=None, test_summary=False, dry_run=False):
+        calls.append(
+            {
+                "cheap_rows": cheap_rows,
+                "booked_rows": booked_rows or [],
+                "secrets": secrets,
+                "test_summary": test_summary,
+                "dry_run": dry_run,
+            }
+        )
         if raise_exc is not None:
             raise raise_exc
 
@@ -178,8 +186,9 @@ def test_one_date_cheap_railcard_fare_sends_one_match(monkeypatch):
 
     assert result == 0
     assert len(send_calls) == 1
-    assert len(send_calls[0]["matches"]) == 1
-    assert send_calls[0]["matches"][0].option.price == Decimal("8.70")
+    rows = send_calls[0]["cheap_rows"]
+    assert len(rows) == 1
+    assert rows[0].options["07:25"].price == Decimal("8.70")
     assert send_calls[0]["dry_run"] is False
 
 
@@ -517,7 +526,7 @@ def test_stop_early_still_finalizes_results_already_in_flight(
     content = _isolated_price_log.read_text(encoding="utf-8")
     assert c5.isoformat() in content
     assert len(send_calls) == 1
-    assert send_calls[0]["matches"][0].travel_date == c5
+    assert send_calls[0]["cheap_rows"][0].travel_date == c5
 
 
 def test_boundary_zone_date_is_dispatched_first(monkeypatch):
@@ -668,9 +677,9 @@ def test_sub_threshold_price_without_railcard_confirmation_still_sends_alert(mon
 
     assert result == 0
     assert len(send_calls) == 1
-    matches = send_calls[0]["matches"]
-    assert matches[0].option.price == Decimal("5.00")
-    assert matches[0].option.railcard_applied is False
+    rows = send_calls[0]["cheap_rows"]
+    assert rows[0].options["07:25"].price == Decimal("5.00")
+    assert rows[0].options["07:25"].railcard_applied is False
 
 
 # ---------------------------------------------------------------------------
@@ -744,6 +753,128 @@ def test_missing_booked_dates_file_behaves_as_empty(monkeypatch, tmp_path):
 
     assert result == 0
     assert fetch_calls == [travel_date]
+
+
+# ---------------------------------------------------------------------------
+# cheap_rows / booked_rows (docs/plans/004-redesign-alert-email.md §8.5)
+# ---------------------------------------------------------------------------
+
+
+def test_booked_and_cheap_dates_are_split_between_the_two_tables(
+    monkeypatch, _empty_booked_dates
+):
+    # TERM_TIME_DAY is Mon 7 Sep 2026; the first two checkable (Tue/Thu/Fri)
+    # candidate dates are Tue 8 Sep and Thu 10 Sep.
+    booked_date = date(2026, 9, 8)
+    cheap_date = date(2026, 9, 10)
+    _empty_booked_dates.write_text(f"{booked_date.isoformat()}\n", encoding="utf-8")
+    _install_fake_scraper(
+        monkeypatch,
+        {
+            booked_date: _raw(_journey(booked_date, "07:25", "08:26", Decimal("5.00"))),
+            cheap_date: _raw(_journey(cheap_date, "07:25", "08:26", Decimal("8.70"))),
+        },
+    )
+    send_calls = _install_fake_notifier(monkeypatch)
+    monkeypatch.setattr(main.config, "MAX_DATES", 2)
+
+    result = main.main(today=TERM_TIME_DAY)
+
+    assert result == 0
+    assert len(send_calls) == 1
+    cheap_rows = send_calls[0]["cheap_rows"]
+    booked_rows = send_calls[0]["booked_rows"]
+    assert [r.travel_date for r in cheap_rows] == [cheap_date]
+    assert [r.travel_date for r in booked_rows] == [booked_date]
+    assert booked_rows[0].options["07:25"].price == Decimal("5.00")
+    assert booked_date not in [r.travel_date for r in cheap_rows]
+
+
+def test_booked_rows_include_dates_that_were_scraped_only(monkeypatch, _empty_booked_dates):
+    booked_and_failed = date(2026, 9, 8)
+    cheap_date = date(2026, 9, 10)
+    _empty_booked_dates.write_text(f"{booked_and_failed.isoformat()}\n", encoding="utf-8")
+    _install_fake_scraper(
+        monkeypatch,
+        {
+            booked_and_failed: scraper.ScraperError("boom"),
+            cheap_date: _raw(_journey(cheap_date, "07:25", "08:26", Decimal("8.70"))),
+        },
+    )
+    send_calls = _install_fake_notifier(monkeypatch)
+    monkeypatch.setattr(main.config, "MAX_DATES", 2)
+
+    result = main.main(today=TERM_TIME_DAY)
+
+    assert result == 0
+    assert len(send_calls) == 1
+    booked_rows = send_calls[0]["booked_rows"]
+    assert booked_rows == []
+
+
+def test_both_departures_cheap_on_one_date_produces_one_row(monkeypatch):
+    travel_date = date(2026, 9, 8)
+    raw = _raw(
+        _journey(travel_date, "07:25", "08:26", Decimal("8.70")),
+        _journey(travel_date, "07:30", "08:31", Decimal("9.50")),
+    )
+    _install_fake_scraper(monkeypatch, {travel_date: raw})
+    send_calls = _install_fake_notifier(monkeypatch)
+    monkeypatch.setattr(main.config, "MAX_DATES", 1)
+
+    result = main.main(today=TERM_TIME_DAY)
+
+    assert result == 0
+    cheap_rows = send_calls[0]["cheap_rows"]
+    assert len(cheap_rows) == 1
+    assert cheap_rows[0].options["07:25"] is not None
+    assert cheap_rows[0].options["07:30"] is not None
+    assert cheap_rows[0].options["07:25"].price == Decimal("8.70")
+    assert cheap_rows[0].options["07:30"].price == Decimal("9.50")
+
+
+def test_rows_are_in_ascending_date_order(monkeypatch, _empty_booked_dates):
+    # First three checkable (Tue/Thu/Fri) candidates after TERM_TIME_DAY
+    # (Mon 7 Sep 2026): Tue 8, Thu 10, Fri 11 Sep.
+    d1 = date(2026, 9, 8)
+    d2 = date(2026, 9, 10)
+    d3 = date(2026, 9, 11)
+    _empty_booked_dates.write_text(f"{d3.isoformat()}\n{d1.isoformat()}\n", encoding="utf-8")
+    _install_fake_scraper(
+        monkeypatch,
+        {
+            d1: _raw(_journey(d1, "07:25", "08:26", Decimal("8.70"))),
+            d2: _raw(_journey(d2, "07:25", "08:26", Decimal("6.00"))),
+            d3: _raw(_journey(d3, "07:25", "08:26", Decimal("7.00"))),
+        },
+    )
+    send_calls = _install_fake_notifier(monkeypatch)
+    monkeypatch.setattr(main.config, "MAX_DATES", 3)
+
+    result = main.main(today=TERM_TIME_DAY)
+
+    assert result == 0
+    cheap_rows = send_calls[0]["cheap_rows"]
+    booked_rows = send_calls[0]["booked_rows"]
+    # d1 and d3 are booked; d2 is the only cheap-and-unbooked date, so
+    # cheap_rows has just one entry — ordering is exercised on booked_rows.
+    assert [r.travel_date for r in cheap_rows] == sorted(r.travel_date for r in cheap_rows)
+    assert [r.travel_date for r in booked_rows] == [d1, d3]
+
+
+def test_rows_carry_arrival_and_direct_metadata(monkeypatch):
+    travel_date = date(2026, 9, 8)
+    raw = _raw(_journey(travel_date, "07:25", "08:26", Decimal("8.70")))
+    _install_fake_scraper(monkeypatch, {travel_date: raw})
+    send_calls = _install_fake_notifier(monkeypatch)
+    monkeypatch.setattr(main.config, "MAX_DATES", 1)
+
+    result = main.main(today=TERM_TIME_DAY)
+
+    assert result == 0
+    option = send_calls[0]["cheap_rows"][0].options["07:25"]
+    assert option.arrival_time == "08:26"
+    assert option.is_direct is True
 
 
 # ---------------------------------------------------------------------------
@@ -903,8 +1034,8 @@ def test_speculative_zone_dates_are_still_checked_and_logged(monkeypatch, _isola
     content = _isolated_price_log.read_text(encoding="utf-8")
     assert speculative_date.isoformat() in content
     assert len(send_calls) == 1
-    matches = send_calls[0]["matches"]
-    assert matches[0].travel_date == speculative_date
+    rows = send_calls[0]["cheap_rows"]
+    assert rows[0].travel_date == speculative_date
 
 
 # ---------------------------------------------------------------------------
@@ -978,8 +1109,10 @@ def test_test_run_with_genuine_match_behaves_normally(monkeypatch):
 
     assert result == 0
     assert len(send_calls) == 1
-    assert send_calls[0]["matches"][0].option.price == Decimal("8.70")
+    rows = send_calls[0]["cheap_rows"]
+    assert rows[0].options["07:25"].price == Decimal("8.70")
     assert send_calls[0]["dry_run"] is False
+    assert send_calls[0]["test_summary"] is False
 
 
 def test_test_run_with_no_match_sends_cheapest_real_fare_found(monkeypatch):
@@ -996,8 +1129,10 @@ def test_test_run_with_no_match_sends_cheapest_real_fare_found(monkeypatch):
 
     assert result == 0
     assert len(send_calls) == 1
-    assert send_calls[0]["matches"][0].option.price == Decimal("45.00")
+    rows = send_calls[0]["cheap_rows"]
+    assert rows[0].options["07:25"].price == Decimal("45.00")
     assert send_calls[0]["dry_run"] is False
+    assert send_calls[0]["test_summary"] is True
 
 
 def test_test_run_picks_the_single_cheapest_across_dates(monkeypatch):
@@ -1015,9 +1150,10 @@ def test_test_run_picks_the_single_cheapest_across_dates(monkeypatch):
 
     main.main(today=TERM_TIME_DAY)
 
-    assert len(send_calls[0]["matches"]) == 1
-    assert send_calls[0]["matches"][0].option.price == Decimal("32.00")
-    assert send_calls[0]["matches"][0].travel_date == d2
+    rows = send_calls[0]["cheap_rows"]
+    assert len(rows) == 1
+    assert rows[0].travel_date == d2
+    assert rows[0].options["07:25"].price == Decimal("32.00")
 
 
 def test_test_run_with_nothing_priced_at_all_sends_no_email(monkeypatch):
@@ -1065,9 +1201,9 @@ def test_test_run_best_effort_includes_railcard_unconfirmed_fares(monkeypatch):
 
     assert result == 0
     assert len(send_calls) == 1
-    matches = send_calls[0]["matches"]
-    assert matches[0].option.price == Decimal("45.00")
-    assert matches[0].option.railcard_applied is False
+    rows = send_calls[0]["cheap_rows"]
+    assert rows[0].options["07:25"].price == Decimal("45.00")
+    assert rows[0].options["07:25"].railcard_applied is False
 
 
 # ---------------------------------------------------------------------------

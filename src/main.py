@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import logging
 import sys
+from collections.abc import Iterable
 from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 from src import booked_dates, config, notifier, parser, price_log, scraper, term_dates
-from src.models import AlertMatch, TrainOption
+from src.models import AlertMatch, DateRow, TrainOption
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +113,14 @@ def _fetch_and_parse_one(
     except parser.ParseError as exc:
         return exc
     return parser.select_target_trains(options, config.TARGET_DEPARTURES)
+
+
+def _date_rows(
+    travel_dates: Iterable[date], results: dict[date, dict[str, TrainOption | None]]
+) -> list[DateRow]:
+    """DateRows for `travel_dates`, always in ascending date order (the
+    order both email tables are rendered in — see src/notifier.py)."""
+    return [DateRow(travel_date=d, options=results[d]) for d in sorted(travel_dates)]
 
 
 def evaluate(
@@ -399,16 +408,40 @@ def main(today: date | None = None) -> int:
         logger.info("no fares below threshold — nothing to alert on")
         return 0
 
+    # The cheap table is derived from `matches` themselves, not
+    # re-computed from a threshold comparison, so the table can never
+    # disagree with the gate that decided to send this email at all —
+    # including in the TEST_RUN fallback case, where the "matches" are
+    # deliberately not below threshold (see _best_effort_matches_for_test).
+    # Every match came from `alertable_results`, so its date is unbooked
+    # by construction.
+    cheap_rows = _date_rows({m.travel_date for m in matches}, results)
+    # Not threshold-gated and not derived from `matches`: every booked
+    # date that was actually scraped this run, purely for information.
+    booked_rows = _date_rows([d for d in results if d in booked], results)
+
     try:
-        notifier.send_alert(matches, secrets, dry_run=False)
+        notifier.send_alert(
+            cheap_rows,
+            secrets,
+            booked_rows=booked_rows,
+            test_summary=is_test_summary,
+            dry_run=False,
+        )
     except notifier.NotifierError as exc:
         logger.error("failed to send alert email: %s", exc)
         return 1
 
     if is_test_summary:
-        logger.info("sent test summary email (real scraped data, not a genuine alert)")
+        logger.info(
+            "sent test summary email (real scraped data, not a genuine alert); "
+            "%d booked date(s) also shown", len(booked_rows)
+        )
     else:
-        logger.info("sent alert for %d match(es)", len(matches))
+        logger.info(
+            "sent alert for %d fare(s) across %d date(s); %d booked date(s) also shown",
+            len(matches), len(cheap_rows), len(booked_rows),
+        )
     return 0
 
 
