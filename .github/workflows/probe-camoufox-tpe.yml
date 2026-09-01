@@ -1,4 +1,8 @@
+```yaml
 name: Probe TPE with Camoufox (manual diagnostic)
+
+# Diagnostic only:
+# Does Camoufox successfully load TPE and its journey application?
 
 on:
   workflow_dispatch: {}
@@ -6,31 +10,60 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
+    timeout-minutes: 15
 
-      - uses: actions/setup-python@v5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
       - name: Install Camoufox
-        run: pip install "camoufox[geoip]"
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "camoufox[geoip]"
 
-      - name: Fetch Camoufox
-        run: python -m camoufox fetch
+      - name: Show installed versions
+        run: |
+          python --version
+          python -m pip show camoufox
+          python -m pip show playwright || true
 
-      - name: Install Playwright Chromium
-        run: python -m playwright install --with-deps chromium
+      - name: Fetch Camoufox browser
+        run: |
+          python -m camoufox fetch
 
-      - name: Run probe
+      - name: Verify Camoufox installation
+        run: |
+          python -m camoufox version
+          python -m camoufox path
+          python -m camoufox list
+
+      - name: Run Camoufox probe
         id: probe
-        run: python scripts/probe_camoufox_tpe.py --out-dir /tmp/camoufox-probe
+        run: |
+          python scripts/probe_camoufox_tpe.py \
+            --out-dir /tmp/camoufox-probe
+
+      - name: Print probe summary
+        if: always()
+        run: |
+          if [ -f /tmp/camoufox-probe/summary.json ]; then
+            cat /tmp/camoufox-probe/summary.json
+          else
+            echo "No summary.json was produced"
+          fi
 
       - name: Upload probe artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: camoufox-crosscountry-probe
+          name: camoufox-tpe-probe
           path: /tmp/camoufox-probe
+          if-no-files-found: warn
           retention-days: 14
+```
+
