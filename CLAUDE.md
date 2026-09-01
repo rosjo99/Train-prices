@@ -34,57 +34,7 @@ got here.
   (`playwright`, `requests`, `pytest`). Money uses `decimal.Decimal`,
   never `float`; all dates/times go through
   `zoneinfo.ZoneInfo("Europe/London")`, never a naive clock read.
-- **Retailer: National Rail Enquiries, not any UK train retailer other
-  than NRE.** Every non-NRE retailer checked so far is bot-protected —
-  most (see exception below) block headless Chromium domain-wide
-  (`net::ERR_CONNECTION_RESET` on the deep-link and on unrelated pages
-  of the same site) even though plain `curl` gets through cleanly —
-  treat this as the default expectation for any new UK train retailer,
-  not something to assume safe until proven otherwise. Confirmed so
-  far: Trainline itself
-  (DataDome, 403 + CAPTCHA); CrossCountry
-  (`buy.crosscountrytrains.co.uk`, Cloudflare bot management); East
-  Midlands Railway, London Northwestern Railway, Northern, and West
-  Midlands Railway (`buytickets.<operator>.co.uk` — all four are the
-  same Trainline white-label deployment, confirmed via identical
-  webpack bundle hashes, so inherit Trainline's DataDome protection —
-  any other operator on this same `buytickets.<operator>.co.uk` shape
-  can be assumed the same without a full re-investigation, see
-  `docs/plans/001-train-price-alert.md` §1.7's closing note for the
-  quick `curl`-only check); TransPennine Express
-  (`ticket.tpexpress.co.uk`) — a genuinely different booking engine
-  with no DataDome/Cloudflare markers in its static HTML, still blocked
-  by an unidentified connection-level bot check (confirmed
-  browser-agnostic, not Chromium- or headless-specific — Firefox and
-  headed Chromium were also blocked, see §1.9's follow-up); and
-  TrainPal (`www.mytrainpal.com`) and Trip.com's own UK rail search
-  (`uk.trip.com`) — both the same Trip.com Group platform (shared
-  `tripcdn.com` assets, `crash.trip.com` telemetry endpoint,
-  `group:Trip`/`group:MyTrainPal` markers), whose embedded telemetry (a
-  request-echoing beacon URL in the static page) directly confirms
-  **Akamai with JA4 TLS fingerprinting**, the first retailer pair here
-  where the connection-level fingerprint is confirmed by the target's
-  own diagnostics rather than inferred, and good evidence this is the
-  common mechanism (not any single vendor's JS challenge) behind every
-  rejection since CrossCountry. None of this is fixable
-  without TLS fingerprint spoofing, which is stealth tooling this
-  project's standing decision already rules out. The exception to
-  "curl gets through": Rail Europe (`www.raileurope.com`), Klook
-  (`www.klook.com`) — the same DataDome product blocking Trainline,
-  configured to challenge even a plain `curl` request outright (HTTP
-  403, `x-datadome: protected`, an explicit CAPTCHA interstitial body
-  — identical template on both sites) — and Omio (`www.omio.co.uk`) —
-  Cloudflare's interactive "Just a moment..." challenge page instead of
-  DataDome, but the same "`curl` alone settles it" outcome. No browser
-  probe was needed for any of the three. Grand Central
-  (`buy.grandcentralrail.com`, same Arriva-operator deep-link shape as
-  CrossCountry) is the trickiest case: `curl` gets a clean 200 with no
-  bot-vendor marker anywhere (served `AmazonS3`, not obviously fronted
-  by Cloudflare/Akamai/DataDome) — but headless Chromium is still
-  blocked domain-wide exactly like every other retailer, confirming
-  "no visible vendor in the static HTML" is not the same as
-  unprotected; some sites' blocking leaves no trace for `curl` to see
-  at all. NRE has no bot protection at all (confirmed via 20+ live
+- **Retailer: National Rail Enquiries.** NRE has no bot protection at all (confirmed via 20+ live
   probe runs). See `docs/plans/001-train-price-alert.md`
   §1.4/§1.5/§1.6/§1.7/§1.8/§1.9/§1.10/§1.11/§1.12/§1.13/§1.14/§1.15/§1.16/§2.2.
 - **Scraping approach:** Playwright (sync API), headless Chromium,
@@ -100,6 +50,7 @@ got here.
   cross-origin iframes, backstops navigation away from
   `nationalrail.co.uk`) even though the deep-link itself never triggers
   it. No proxies, stealth plugins, or CAPTCHA-solving — not needed.
+- When attempting other booking platforms use the Camoufox browser.
 - **Term-date logic:** plain Python module `src/term_dates.py` — a
   commented `TERMS` data block (term name, inclusive start/end, excluded
   ranges/days) plus pure functions `is_in_term()`, `is_checkable_day()`,
