@@ -353,6 +353,40 @@ as EMR's, LNR's, and Northern's pages. Same shared Trainline
 white-label deployment, rejected without a separate live
 headless-browser probe. NRE remains the only viable retailer.
 
+### 1.11 TrainPal investigated (2026-09-01) and rejected — confirmed Akamai JA4 fingerprinting
+
+TrainPal (`www.mytrainpal.com`, deep-link shape
+`https://www.mytrainpal.com/train-tickets?fromStationDetail[...]=...&toStationDetail[...]=...&outwardDate=<ISO8601>&railcards[value][0][Code]=YNG&...`)
+is a Trip.com Group property (Next.js app, `apigateway.mytrainpal.com`,
+`tripcdn.com` assets) — a third distinct booking engine from Trainline
+and TPE's. `curl` against the deep-link gets a clean HTTP 200, 3/3
+attempts, with real page markup (~150KB) — but no actual fare data;
+like NRE and TPE it's a client-rendered shell reading real journeys
+via a separate API call after JS runs.
+
+The static HTML itself supplied stronger evidence than any prior
+retailer here: an embedded telemetry beacon URL in the page (Trip.com's
+own APM/crash-reporting config, `crash.trip.com/mcd_crash_server/...`)
+echoes back our own request's headers as logged context, including
+`req[headers][akamai_ja4_fp]=t13d3012h2_1d37bd780c83_b26ce05bbdd6` and
+`req[headers][x-via]=akamai` — direct, first-party confirmation that
+this site sits behind **Akamai** with **JA4 TLS fingerprinting**
+active on incoming connections (not inferred from the block behaviour
+the way it was for TPE in §1.9 — Trip.com's own logging says so).
+
+Result: rejected, same signature as every retailer since §1.5. Headless
+Chromium via Playwright gets `net::ERR_CONNECTION_RESET` on both the
+deep-link and the unrelated `www.mytrainpal.com` homepage — domain-wide
+— confirmed via the outbound proxy's own status log (far side closing
+the tunnel mid-handshake, matching `curl`'s clean success on the exact
+same URL). This is the first retailer investigated where the
+connection-level-fingerprint hypothesis from §1.9's TPE follow-up is
+confirmed by the target site's own embedded diagnostics rather than
+inferred — good supporting evidence that Akamai/JA4-style TLS
+fingerprinting, not any single vendor's JS challenge, is the common
+mechanism behind every rejection since CrossCountry. NRE remains the
+only viable retailer.
+
 ---
 
 ## 2. Decisions not already in CLAUDE.md
