@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import FIRST_COMPLETED, Future, ThreadPoolExecutor, wait
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -36,16 +36,20 @@ PARALLEL_DATES = 5
 # National Rail Enquiries only releases fares up to a daily-rolling
 # window — past it, the page never makes its journey-planner XHR at all,
 # so the scraper times out every time, not just occasionally. Measured at
-# 94 days on 2026-08-31 (good at +94, failed at +95) and confirmed again
-# on 2026-09-01 — further out than the "roughly 12 weeks" this repo
-# assumed previously, and expected to drift at future timetable-change
-# dates (see CLAUDE.md). Set deliberately past the observed value: beyond
-# it, a timeout is the expected answer, not a fault, so retrying it three
-# times just buys the same answer three times slower (see
-# SPECULATIVE_ATTEMPTS below). This affects attempt count only — it is
-# not a cap on which dates get checked; MAX_CONSECUTIVE_FAILURES and
-# term_dates.LAST_KNOWN_DATE are what bound that.
-FULL_RETRY_HORIZON_DAYS = 98
+# exactly 94 days three times with zero drift: 2026-08-31 (bracketed
+# tightly — good at +94, failed at +95) and two runs on 2026-09-01 (both
+# good at +94, next candidate +98). All three measurements were taken
+# between 07:41 and 09:52 London time, so the horizon at the 00:37 UTC
+# cron firing is unmeasured — see docs/plans/003-scheduler-and-retry-
+# horizon.md §1.1/§5.2. Set one day past the observed value: beyond it, a
+# timeout is the expected answer, not a fault, so retrying it three times
+# just buys the same answer three times slower (see SPECULATIVE_ATTEMPTS
+# below) — but 95 keeps one day of margin against the horizon drifting
+# further out before this constant is next updated (plan 003 §4.1). This
+# affects attempt count only — it is not a cap on which dates get
+# checked; MAX_CONSECUTIVE_FAILURES and term_dates.LAST_KNOWN_DATE are
+# what bound that.
+FULL_RETRY_HORIZON_DAYS = 95
 
 # How many attempts a date beyond FULL_RETRY_HORIZON_DAYS gets. It's still
 # fetched, parsed, logged, and eligible to alert — just with one attempt
@@ -57,15 +61,17 @@ SPECULATIVE_ATTEMPTS = 1
 # Reactive backstop for when the static FULL_RETRY_HORIZON_DAYS assumption
 # turns out wrong for a given run (NRE having a bad day, or its release
 # lag drifting past the horizon before this constant is updated). Once
-# this many dates in a row fail, stop scheduling any further batches
-# rather than spending retry budget on every remaining date of the school
-# year. Dates are grouped into concurrent batches of PARALLEL_DATES (see
-# main()), so this is now checked once per batch in original-date order
-# rather than after every single date — a batch that straddles the
-# threshold can attempt up to PARALLEL_DATES-1 dates beyond it before the
-# run notices, a small, accepted cost of running dates in parallel. A run
-# that succeeds on some dates and then hits this cutoff still alerts on
-# whatever it found, and nothing is lost long-term: the next run
+# this many dates in a row fail, stop submitting any further dates rather
+# than spending retry budget on every remaining date of the school year.
+# Counted strictly in ascending travel-date order on the main thread as
+# results are finalized (see main()'s continuous scheduler), regardless
+# of the order dates actually complete in, so this behaves exactly like a
+# serial run over `candidates` would. Work already in flight when the
+# threshold is hit is still allowed to finish and is still finalized —
+# logged, added to results, eligible to alert — nothing already scraped
+# is thrown away (docs/plans/003-scheduler-and-retry-horizon.md §4.3). A
+# run that succeeds on some dates and then hits this cutoff still alerts
+# on whatever it found, and nothing is lost long-term: the next run
 # re-derives the candidate list from scratch, still bounded only by
 # term_dates.LAST_KNOWN_DATE.
 MAX_CONSECUTIVE_FAILURES = 5
@@ -90,9 +96,10 @@ def _fetch_and_parse_one(
     travel_date: date, attempts: int = 3
 ) -> dict[str, TrainOption | None] | Exception:
     """Runs in a worker thread: one full scrape + parse for a single
-    travel date. Returns the outcome instead of raising/returning, so a
-    whole concurrent batch's results can be gathered and then processed,
-    in original date order, after every worker in it has finished.
+    travel date. Returns the outcome instead of raising/returning, so
+    main()'s scheduler can harvest it whenever it completes and finalize
+    it later, strictly in ascending travel-date order, regardless of
+    completion order.
     """
     try:
         raw = scraper.fetch_journey_search(
@@ -171,16 +178,20 @@ def _best_effort_matches_for_test(
     return [best] if best is not None else []
 
 
-def _log_stopped_early(last_failed_date: date, remaining_count: int) -> None:
+def _log_stopped_early(
+    last_failed_date: date, remaining_count: int, in_flight_count: int
+) -> None:
     logger.warning(
         "[%s] %d consecutive dates failed — stopping early; this suggests "
         "either NRE's fare-release window has moved closer than "
         "FULL_RETRY_HORIZON_DAYS (%d days) assumes, or NRE is unavailable; "
-        "%d further candidate date(s) were not attempted",
+        "%d further candidate date(s) were not attempted; %d already in "
+        "flight will be allowed to finish and are still logged",
         last_failed_date.isoformat(),
         MAX_CONSECUTIVE_FAILURES,
         FULL_RETRY_HORIZON_DAYS,
         remaining_count,
+        in_flight_count,
     )
 
 
@@ -192,6 +203,33 @@ def _log_target_summary(travel_date: date, targets: dict[str, TrainOption | None
             logger.info("[%s] %s: sold out", travel_date.isoformat(), departure_time)
         else:
             logger.info("[%s] %s: %s", travel_date.isoformat(), departure_time, option.price)
+
+
+# The candidate most likely to spend the full 3-attempt budget and still
+# fail is the latest one still inside FULL_RETRY_HORIZON_DAYS: nearer
+# dates reliably succeed on attempt 1, and dates past the horizon only
+# ever get SPECULATIVE_ATTEMPTS regardless. Dispatching it first overlaps
+# its ~51s worst case with the bulk of the run instead of appending it to
+# the tail. Zone-gated so that short candidate lists (a manual max_dates
+# run, or the last weeks of the school year) are left in plain ascending
+# order — reordering only kicks in when there really is a boundary date.
+# The moved date is always attempted, even if the early stop would
+# otherwise have prevented it — one extra doomed date's worth of work,
+# running concurrently with useful work, so ~0 wall clock.
+# Set to 0 to disable the reordering entirely.
+BOUNDARY_PRIORITY_ZONE_DAYS = 7
+
+
+def _dispatch_order(candidates: list[date], full_retry_until: date) -> list[int]:
+    """Indices into `candidates`, in the order they should be submitted.
+
+    A permutation of range(len(candidates)) — dispatch order only; every
+    result is still finalized in ascending date order (see main()).
+    """
+    zone_start = full_retry_until - timedelta(days=BOUNDARY_PRIORITY_ZONE_DAYS)
+    boundary = [i for i, d in enumerate(candidates) if zone_start < d <= full_retry_until]
+    first = boundary[-1:]  # at most one; [] when the zone is empty
+    return first + [i for i in range(len(candidates)) if i not in set(first)]
 
 
 def main(today: date | None = None) -> int:
@@ -231,56 +269,105 @@ def main(today: date | None = None) -> int:
     # it get SPECULATIVE_ATTEMPTS (see FULL_RETRY_HORIZON_DAYS above).
     full_retry_until = today + timedelta(days=FULL_RETRY_HORIZON_DAYS)
 
+    # Continuous queue scheduler (docs/plans/003-scheduler-and-retry-
+    # horizon.md §4.2): a rolling window of up to PARALLEL_DATES in-flight
+    # scrapes, refilled the instant any one finishes, rather than fixed
+    # batches that leave idle workers behind a single straggler. Dispatch
+    # order (`order`) and finalization order are deliberately decoupled —
+    # dispatch is free to reorder (see _dispatch_order below), but
+    # finalization — failure counting, price-log writes, alert
+    # eligibility — always happens strictly in ascending candidate-index
+    # (i.e. travel-date) order, via the `completed` reorder buffer, so
+    # MAX_CONSECUTIVE_FAILURES behaves exactly like a serial run would.
+    order = _dispatch_order(candidates, full_retry_until)
+    cursor = 0
+    submitted: set[int] = set()
+    in_flight: dict[Future, int] = {}
+    completed: dict[int, dict[str, TrainOption | None] | Exception] = {}
+    next_to_finalize = 0
+    stop_submitting = False
+
     with ThreadPoolExecutor(max_workers=PARALLEL_DATES) as executor:
-        for batch_start in range(0, len(candidates), PARALLEL_DATES):
-            batch = candidates[batch_start : batch_start + PARALLEL_DATES]
-            batch_attempts = [
-                3 if d <= full_retry_until else SPECULATIVE_ATTEMPTS for d in batch
-            ]
-            outcomes = list(
-                zip(batch, executor.map(_fetch_and_parse_one, batch, batch_attempts))
-            )
+        while True:
+            # 1. REFILL — submit until the window is full or nothing's left.
+            while (
+                not stop_submitting
+                and len(in_flight) < PARALLEL_DATES
+                and cursor < len(order)
+            ):
+                idx = order[cursor]
+                cursor += 1
+                travel_date = candidates[idx]
+                attempts = 3 if travel_date <= full_retry_until else SPECULATIVE_ATTEMPTS
+                in_flight[executor.submit(_fetch_and_parse_one, travel_date, attempts)] = idx
+                submitted.add(idx)
 
-            stop_early = False
-            for offset, (travel_date, outcome) in enumerate(outcomes):
-                if isinstance(outcome, (scraper.BlockedError, scraper.HijackedError)):
-                    logger.error(
-                        "[%s] %s — aborting the whole run, not scheduling further "
-                        "dates: %s",
-                        travel_date.isoformat(),
-                        type(outcome).__name__,
-                        outcome,
-                    )
-                    return 1
-
-                if isinstance(outcome, Exception):
-                    logger.warning(
-                        "[%s] scrape/parse failed, skipping this date: %s",
-                        travel_date.isoformat(),
-                        outcome,
-                    )
-                    failures.append((travel_date, str(outcome)))
-                    consecutive_failures += 1
-                    if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                        remaining = len(candidates) - (batch_start + offset) - 1
-                        _log_stopped_early(travel_date, remaining)
-                        stop_early = True
-                        break
-                    continue
-
-                consecutive_failures = 0
-                targets = outcome
-                _log_target_summary(travel_date, targets)
-                results[travel_date] = targets
-
-                price_log.append_price_log(
-                    config.PRICE_LOG_PATH,
-                    datetime.now(timezone.utc),
-                    [(travel_date, departure_time, option) for departure_time, option in targets.items()],
-                )
-
-            if stop_early:
+            # 2. DONE?
+            if not in_flight:
                 break
+
+            # 3. HARVEST — block until at least one completes, take all
+            # that have (wait() returns every already-done future, not
+            # just one; snapshot the keys since harvest mutates in_flight).
+            done, _ = wait(list(in_flight), return_when=FIRST_COMPLETED)
+            for future in done:
+                completed[in_flight.pop(future)] = future.result()
+
+            # 4. FINALIZE — strictly in ascending candidate-index order.
+            while True:
+                if next_to_finalize in completed:
+                    idx = next_to_finalize
+                    next_to_finalize += 1
+                    travel_date = candidates[idx]
+                    outcome = completed.pop(idx)
+
+                    if isinstance(outcome, (scraper.BlockedError, scraper.HijackedError)):
+                        logger.error(
+                            "[%s] %s — aborting the whole run, not scheduling "
+                            "further dates: %s",
+                            travel_date.isoformat(),
+                            type(outcome).__name__,
+                            outcome,
+                        )
+                        return 1
+
+                    if isinstance(outcome, Exception):
+                        logger.warning(
+                            "[%s] scrape/parse failed, skipping this date: %s",
+                            travel_date.isoformat(),
+                            outcome,
+                        )
+                        failures.append((travel_date, str(outcome)))
+                        consecutive_failures += 1
+                        if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                            if not stop_submitting:
+                                remaining = len(order) - cursor
+                                _log_stopped_early(travel_date, remaining, len(in_flight))
+                            stop_submitting = True
+                        continue
+
+                    consecutive_failures = 0
+                    targets = outcome
+                    _log_target_summary(travel_date, targets)
+                    results[travel_date] = targets
+
+                    price_log.append_price_log(
+                        config.PRICE_LOG_PATH,
+                        datetime.now(timezone.utc),
+                        [(travel_date, departure_time, option) for departure_time, option in targets.items()],
+                    )
+                elif (
+                    stop_submitting
+                    and next_to_finalize not in submitted
+                    and next_to_finalize < len(candidates)
+                ):
+                    # Never submitted and never will be — skip over it so
+                    # later already-completed results (e.g. a priority-
+                    # dispatched date, see _dispatch_order) can still be
+                    # finalized instead of being stranded behind this gap.
+                    next_to_finalize += 1
+                else:
+                    break
 
     if not results:
         logger.error("all %d attempted candidate date(s) failed — see failures logged above", len(failures))

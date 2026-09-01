@@ -89,23 +89,41 @@ is still checked and logged, just never alerted on.
   or manual dispatch re-arms them.
 - **Concurrency:** up to `src.main.PARALLEL_DATES` (5) travel dates are
   scraped at once, each in its own headless Chromium browser, via a
-  `ThreadPoolExecutor` batching candidates in fixed-size groups (see
-  `src/main.py`). NRE has no bot protection to trip (see above), so this
-  is purely a wall-clock lever, not something that needed rate-limiting
-  first. Per-attempt timing was also tightened: the page-result wait
-  budget (45s → 20s → 10s; navigation itself still gets its own 20s via
+  continuous queue scheduler in `main()` (`src/main.py`) rather than fixed
+  batches: a rolling window of up to `PARALLEL_DATES` in-flight scrapes,
+  refilled the instant any one finishes, so one slow date no longer idles
+  the rest of the pool behind it. Results are still finalized — logged,
+  counted toward `MAX_CONSECUTIVE_FAILURES`, written to
+  `price-history.csv` — strictly in ascending travel-date order via a
+  reorder buffer, regardless of the order scrapes actually complete in,
+  so a straggler can never cause an already-scraped result to be dropped
+  (the old batch scheduler could silently discard up to
+  `PARALLEL_DATES - 1` already-fetched dates when the early stop fired
+  mid-batch; the new one finalizes everything already in flight). One
+  date — the latest candidate still inside `FULL_RETRY_HORIZON_DAYS` — is
+  dispatched first regardless of its position in the date-ordered list
+  (`src.main._dispatch_order`, zone-gated by
+  `src.main.BOUNDARY_PRIORITY_ZONE_DAYS`), since it's the one predictably
+  slow to fail and dispatching it early overlaps its worst case with the
+  rest of the run instead of appending it to the tail. NRE has no bot
+  protection to trip (see above), so this is purely a wall-clock lever,
+  not something that needed rate-limiting first. Per-attempt timing was
+  also tightened: the page-result wait budget (45s → 20s → 10s;
+  navigation itself still gets its own 20s via
   `NAVIGATION_TIMEOUT_SECONDS`), the poll interval (500ms → 250ms), and
   the scrape-retry backoff (30s/90s → 10s/20s → 5s/10s) — see
   `src/scraper.py`. The fixed 5-15s pause previously inserted between
-  every date (serial-only pacing, not needed once dates are batched
+  every date (serial-only pacing, not needed once dates are scheduled
   concurrently) was removed entirely. Separately, `src.main.
-  FULL_RETRY_HORIZON_DAYS` (98 days) gives dates beyond NRE's observed
-  fare-release horizon a single attempt instead of three — a timeout that
-  far out is the expected answer, not a fault, so retrying it three times
-  just buys the same answer three times slower. This only changes attempt
-  count: the date is still fetched, still logged to `price-history.csv`,
-  and still eligible to alert every run (see "Which dates get checked");
-  see `docs/plans/002-speed-up-price-check-run.md` for the measured
+  FULL_RETRY_HORIZON_DAYS` (95 days — the horizon has now measured at
+  exactly 94 days three times, with zero drift) gives dates beyond NRE's
+  observed fare-release horizon a single attempt instead of three — a
+  timeout that far out is the expected answer, not a fault, so retrying
+  it three times just buys the same answer three times slower. This only
+  changes attempt count: the date is still fetched, still logged to
+  `price-history.csv`, and still eligible to alert every run (see "Which
+  dates get checked"); see `docs/plans/002-speed-up-price-check-run.md`
+  and `docs/plans/003-scheduler-and-retry-horizon.md` for the measured
   evidence behind all of these numbers.
 - **Email service:** Resend free tier (3,000 emails/month) via a single
   `POST https://api.resend.com/emails` with a Bearer token. No SMTP,
@@ -160,9 +178,10 @@ Unlike the abandoned Trainline approach, NRE has no bot protection to
 trip (see Tech decisions), so this volume is not a known risk — see
 `docs/plans/001-train-price-alert.md` §2.2/§1.4 for the original numbers
 and the accepted tradeoff (mainly wall-clock run time, not IP
-reputation). Since dates are now checked `PARALLEL_DATES`-at-a-time
-rather than strictly one at a time (see Tech decisions), actual run time
-is a fraction of that original estimate. Most of those 100+ requests
+reputation). Since dates are now checked up to `PARALLEL_DATES` at once,
+continuously scheduled, rather than strictly one at a time (see Tech
+decisions), actual run time is a fraction of that original estimate. Most
+of those 100+ requests
 beyond NRE's fare-release horizon are now cheap, single-attempt probes
 (`src.main.FULL_RETRY_HORIZON_DAYS`, see Tech decisions → Concurrency)
 rather than full three-attempt retry cycles, since a request that far out
