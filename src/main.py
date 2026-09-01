@@ -33,18 +33,41 @@ ARTIFACTS_DIR = Path("artifacts")
 # Chromium instances at once.
 PARALLEL_DATES = 5
 
-# National Rail Enquiries only releases fares up to ~12 weeks ahead —
-# candidate dates beyond that horizon fail every time (scrape or parse
-# error), not just occasionally, since there's simply no fare data yet.
-# Once this many dates in a row fail, stop scheduling any further batches
-# rather than spending the full per-date retry budget on every remaining
-# date of the school year. Dates are grouped into concurrent batches of
-# PARALLEL_DATES (see main()), so this is now checked once per batch in
-# original-date order rather than after every single date — a batch that
-# straddles the threshold can attempt up to PARALLEL_DATES-1 dates beyond
-# it before the run notices, a small, accepted cost of running dates in
-# parallel. A run that succeeds on some dates and then hits this cutoff
-# still alerts on whatever it found.
+# National Rail Enquiries only releases fares up to a daily-rolling
+# window — past it, the page never makes its journey-planner XHR at all,
+# so the scraper times out every time, not just occasionally. Measured at
+# 94 days on 2026-08-31 (good at +94, failed at +95) and confirmed again
+# on 2026-09-01 — further out than the "roughly 12 weeks" this repo
+# assumed previously, and expected to drift at future timetable-change
+# dates (see CLAUDE.md). Set deliberately past the observed value: beyond
+# it, a timeout is the expected answer, not a fault, so retrying it three
+# times just buys the same answer three times slower (see
+# SPECULATIVE_ATTEMPTS below). This affects attempt count only — it is
+# not a cap on which dates get checked; MAX_CONSECUTIVE_FAILURES and
+# term_dates.LAST_KNOWN_DATE are what bound that.
+FULL_RETRY_HORIZON_DAYS = 98
+
+# How many attempts a date beyond FULL_RETRY_HORIZON_DAYS gets. It's still
+# fetched, parsed, logged, and eligible to alert — just with one attempt
+# instead of three, since a timeout there is expected, not a transient
+# fault. It regains the full retry budget once it comes inside the
+# horizon on some later run.
+SPECULATIVE_ATTEMPTS = 1
+
+# Reactive backstop for when the static FULL_RETRY_HORIZON_DAYS assumption
+# turns out wrong for a given run (NRE having a bad day, or its release
+# lag drifting past the horizon before this constant is updated). Once
+# this many dates in a row fail, stop scheduling any further batches
+# rather than spending retry budget on every remaining date of the school
+# year. Dates are grouped into concurrent batches of PARALLEL_DATES (see
+# main()), so this is now checked once per batch in original-date order
+# rather than after every single date — a batch that straddles the
+# threshold can attempt up to PARALLEL_DATES-1 dates beyond it before the
+# run notices, a small, accepted cost of running dates in parallel. A run
+# that succeeds on some dates and then hits this cutoff still alerts on
+# whatever it found, and nothing is lost long-term: the next run
+# re-derives the candidate list from scratch, still bounded only by
+# term_dates.LAST_KNOWN_DATE.
 MAX_CONSECUTIVE_FAILURES = 5
 
 
@@ -64,7 +87,7 @@ def _ensure_logging_configured() -> None:
 
 
 def _fetch_and_parse_one(
-    travel_date: date,
+    travel_date: date, attempts: int = 3
 ) -> dict[str, TrainOption | None] | Exception:
     """Runs in a worker thread: one full scrape + parse for a single
     travel date. Returns the outcome instead of raising/returning, so a
@@ -72,7 +95,9 @@ def _fetch_and_parse_one(
     in original date order, after every worker in it has finished.
     """
     try:
-        raw = scraper.fetch_journey_search(travel_date, artifacts_dir=ARTIFACTS_DIR)
+        raw = scraper.fetch_journey_search(
+            travel_date, artifacts_dir=ARTIFACTS_DIR, attempts=attempts
+        )
     except scraper.ScraperError as exc:
         return exc
     try:
@@ -148,11 +173,13 @@ def _best_effort_matches_for_test(
 
 def _log_stopped_early(last_failed_date: date, remaining_count: int) -> None:
     logger.warning(
-        "[%s] %d consecutive dates failed — stopping early, assuming fares "
-        "aren't released yet this far out (NRE releases fares roughly 12 "
-        "weeks ahead); %d further candidate date(s) were not attempted",
+        "[%s] %d consecutive dates failed — stopping early; this suggests "
+        "either NRE's fare-release window has moved closer than "
+        "FULL_RETRY_HORIZON_DAYS (%d days) assumes, or NRE is unavailable; "
+        "%d further candidate date(s) were not attempted",
         last_failed_date.isoformat(),
         MAX_CONSECUTIVE_FAILURES,
+        FULL_RETRY_HORIZON_DAYS,
         remaining_count,
     )
 
@@ -200,10 +227,19 @@ def main(today: date | None = None) -> int:
     failures: list[tuple[date, str]] = []
     consecutive_failures = 0
 
+    # Dates this far out or closer get the full retry budget; dates beyond
+    # it get SPECULATIVE_ATTEMPTS (see FULL_RETRY_HORIZON_DAYS above).
+    full_retry_until = today + timedelta(days=FULL_RETRY_HORIZON_DAYS)
+
     with ThreadPoolExecutor(max_workers=PARALLEL_DATES) as executor:
         for batch_start in range(0, len(candidates), PARALLEL_DATES):
             batch = candidates[batch_start : batch_start + PARALLEL_DATES]
-            outcomes = list(zip(batch, executor.map(_fetch_and_parse_one, batch)))
+            batch_attempts = [
+                3 if d <= full_retry_until else SPECULATIVE_ATTEMPTS for d in batch
+            ]
+            outcomes = list(
+                zip(batch, executor.map(_fetch_and_parse_one, batch, batch_attempts))
+            )
 
             stop_early = False
             for offset, (travel_date, outcome) in enumerate(outcomes):

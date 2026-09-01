@@ -77,7 +77,7 @@ def _install_fake_scraper(monkeypatch: pytest.MonkeyPatch, results_by_date: dict
     """
     calls: list[date] = []
 
-    def _fake_fetch(travel_date, *, artifacts_dir=None):
+    def _fake_fetch(travel_date, *, artifacts_dir=None, attempts=None):
         calls.append(travel_date)
         result = results_by_date[travel_date]
         if isinstance(result, Exception):
@@ -572,7 +572,7 @@ def test_max_dates_one_with_many_real_candidates_checks_exactly_one(monkeypatch)
     monkeypatch.setattr(main.config, "MAX_DATES", 1)
     fetch_calls: list[date] = []
 
-    def _fake_fetch(travel_date, *, artifacts_dir=None):
+    def _fake_fetch(travel_date, *, artifacts_dir=None, attempts=None):
         fetch_calls.append(travel_date)
         return _raw()
 
@@ -587,7 +587,7 @@ def test_max_dates_one_with_many_real_candidates_checks_exactly_one(monkeypatch)
 def test_first_day_of_autumn_term_has_102_candidates(monkeypatch):
     fetch_calls: list[date] = []
 
-    def _fake_fetch(travel_date, *, artifacts_dir=None):
+    def _fake_fetch(travel_date, *, artifacts_dir=None, attempts=None):
         fetch_calls.append(travel_date)
         return _raw()
 
@@ -597,6 +597,94 @@ def test_first_day_of_autumn_term_has_102_candidates(monkeypatch):
 
     assert result == 0
     assert len(fetch_calls) == 102
+
+
+# ---------------------------------------------------------------------------
+# FULL_RETRY_HORIZON_DAYS / speculative attempts (plan 002 §4.3, §9)
+# ---------------------------------------------------------------------------
+
+
+def test_speculative_zone_dates_get_a_single_attempt(monkeypatch):
+    # in_range_date is within FULL_RETRY_HORIZON_DAYS of "today" and must
+    # get the full attempts=3 retry budget; speculative_date is beyond it
+    # and must get only attempts=1 (main.SPECULATIVE_ATTEMPTS).
+    in_range_date = TERM_TIME_DAY + datetime_module.timedelta(days=1)
+    speculative_date = TERM_TIME_DAY + datetime_module.timedelta(
+        days=main.FULL_RETRY_HORIZON_DAYS + 1
+    )
+    monkeypatch.setattr(
+        main.term_dates,
+        "checkable_dates",
+        lambda start, end: [in_range_date, speculative_date],
+    )
+
+    attempts_by_date: dict[date, int] = {}
+
+    def _fake_fetch(travel_date, *, artifacts_dir=None, attempts=None):
+        attempts_by_date[travel_date] = attempts
+        return _raw()
+
+    monkeypatch.setattr(main.scraper, "fetch_journey_search", _fake_fetch)
+    _install_fake_notifier(monkeypatch)
+
+    result = main.main(today=TERM_TIME_DAY)
+
+    assert result == 0
+    assert attempts_by_date[in_range_date] == 3
+    assert attempts_by_date[speculative_date] == main.SPECULATIVE_ATTEMPTS
+
+
+def test_speculative_zone_dates_are_still_checked_and_logged(monkeypatch, _isolated_price_log):
+    # Reduced retries must not mean reduced coverage: a date beyond
+    # FULL_RETRY_HORIZON_DAYS that *does* return a real cheap fare is
+    # still fetched, still written to price-history.csv, and still
+    # alerts — the hard constraint in plan 002 §4.
+    #
+    # 98 days out from TERM_TIME_DAY (early September) lands in mid
+    # December — outside BST — so, unlike other tests in this file, the
+    # journey's timestamps can't use _journey()/_iso()'s hardcoded
+    # +01:00 offset (that would shift 07:25 to 06:25 once converted to
+    # Europe/London and fail to match config.TARGET_DEPARTURES). Build
+    # the raw journey directly with the correct GMT (+00:00) offset.
+    speculative_date = TERM_TIME_DAY + datetime_module.timedelta(
+        days=main.FULL_RETRY_HORIZON_DAYS + 1
+    )
+    monkeypatch.setattr(
+        main.term_dates, "checkable_dates", lambda start, end: [speculative_date]
+    )
+    date_str = speculative_date.isoformat()
+    raw = _raw(
+        {
+            "id": 1,
+            "timetable": {
+                "scheduled": {
+                    "departure": f"{date_str}T07:25:00+00:00",
+                    "arrival": f"{date_str}T08:26:00+00:00",
+                }
+            },
+            "legs": [{}],
+            "fares": [
+                {
+                    "typeDescription": "Advance Single",
+                    "railcardFares": [
+                        {"code": config.RAILCARD_CODE, "prices": {"adult": 870, "child": 0}}
+                    ],
+                }
+            ],
+        }
+    )
+    fetch_calls = _install_fake_scraper(monkeypatch, {speculative_date: raw})
+    send_calls = _install_fake_notifier(monkeypatch)
+
+    result = main.main(today=TERM_TIME_DAY)
+
+    assert result == 0
+    assert fetch_calls == [speculative_date]
+    content = _isolated_price_log.read_text(encoding="utf-8")
+    assert speculative_date.isoformat() in content
+    assert len(send_calls) == 1
+    matches = send_calls[0]["matches"]
+    assert matches[0].travel_date == speculative_date
 
 
 # ---------------------------------------------------------------------------

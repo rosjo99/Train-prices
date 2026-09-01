@@ -40,14 +40,19 @@ jobs:
   check:
     runs-on: ubuntu-latest
     # Every remaining term-time Tue/Thu/Fri is checked on every run (see
-    # plan §2.2) — up to ~100 dates early in a term, scraped
-    # PARALLEL_DATES-at-a-time (see src/main.py) rather than one at a
-    # time, so wall-clock time is roughly (dates / PARALLEL_DATES) *
-    # per-date time instead of the old fully-sequential total. 45 minutes
-    # gives headroom over the expected run time; tighten once real
-    # durations are observed. A manual run defaults max_dates to 1, so it
+    # plan §2.2) — still up to ~100+ dates early in a term (candidate-list
+    # size is unchanged, see docs/plans/002-speed-up-price-check-run.md
+    # Decisions §1), scraped PARALLEL_DATES-at-a-time (see src/main.py)
+    # rather than one at a time. Per-date cost dropped sharply once the
+    # navigation/poll/backoff timings and per-date attempt count were
+    # tuned to measured values (see src/scraper.py and src/main.py's
+    # FULL_RETRY_HORIZON_DAYS): a real scheduled run measured at 315s
+    # (5m15s) total before that change, projected at ~107s (1m47s) after
+    # — see docs/plans/002-speed-up-price-check-run.md §1 and §10. 20
+    # minutes keeps real headroom over that projection without leaving 45
+    # minutes of dead slack. A manual run defaults max_dates to 1, so it
     # normally finishes in well under a minute.
-    timeout-minutes: 45
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -57,7 +62,21 @@ jobs:
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
-      - run: playwright install --with-deps chromium
+      # No --with-deps: confirmed live on run 33489993285 (2026-09-01)
+      # that --with-deps installs nothing this scraper actually needs on
+      # the ubuntu-24.04 runner image — every shared library Chromium
+      # requires (libnss3, libcairo2, libasound2t64, ...) was already
+      # present ("is already the newest version"), and the only 9
+      # packages it did install were fonts (fonts-ipafont-gothic,
+      # fonts-freefont-ttf, ...), which this scraper never needs since it
+      # reads a JSON XHR rather than rendering/reading glyphs. The
+      # apt-get update this triggers cost ~16s on every run, uncacheable
+      # since runners are fresh VMs each time. If a future runner image
+      # ever drops one of those shared libraries, Chromium simply fails
+      # to launch, src/scraper.py's _launch_browser turns that into a
+      # clear ScraperError, the job fails loudly and uploads artifacts —
+      # and the fix is putting --with-deps back, a one-word revert.
+      - run: playwright install chromium
       - name: Run price check
         env:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}

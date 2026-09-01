@@ -93,11 +93,20 @@ is still checked and logged, just never alerted on.
   `src/main.py`). NRE has no bot protection to trip (see above), so this
   is purely a wall-clock lever, not something that needed rate-limiting
   first. Per-attempt timing was also tightened: the page-result wait
-  budget (45s → 20s), the poll interval (500ms → 250ms), and the
-  scrape-retry backoff (30s/90s → 10s/20s) — see `src/scraper.py`. The
-  fixed 5-15s pause previously inserted between every date (serial-only
-  pacing, not needed once dates are batched concurrently) was removed
-  entirely.
+  budget (45s → 20s → 10s; navigation itself still gets its own 20s via
+  `NAVIGATION_TIMEOUT_SECONDS`), the poll interval (500ms → 250ms), and
+  the scrape-retry backoff (30s/90s → 10s/20s → 5s/10s) — see
+  `src/scraper.py`. The fixed 5-15s pause previously inserted between
+  every date (serial-only pacing, not needed once dates are batched
+  concurrently) was removed entirely. Separately, `src.main.
+  FULL_RETRY_HORIZON_DAYS` (98 days) gives dates beyond NRE's observed
+  fare-release horizon a single attempt instead of three — a timeout that
+  far out is the expected answer, not a fault, so retrying it three times
+  just buys the same answer three times slower. This only changes attempt
+  count: the date is still fetched, still logged to `price-history.csv`,
+  and still eligible to alert every run (see "Which dates get checked");
+  see `docs/plans/002-speed-up-price-check-run.md` for the measured
+  evidence behind all of these numbers.
 - **Email service:** Resend free tier (3,000 emails/month) via a single
   `POST https://api.resend.com/emails` with a Bearer token. No SMTP,
   OAuth, or app-password rotation. `ALERT_EMAIL_TO` may hold one or more
@@ -153,7 +162,19 @@ trip (see Tech decisions), so this volume is not a known risk — see
 and the accepted tradeoff (mainly wall-clock run time, not IP
 reputation). Since dates are now checked `PARALLEL_DATES`-at-a-time
 rather than strictly one at a time (see Tech decisions), actual run time
-is a fraction of that original estimate.
+is a fraction of that original estimate. Most of those 100+ requests
+beyond NRE's fare-release horizon are now cheap, single-attempt probes
+(`src.main.FULL_RETRY_HORIZON_DAYS`, see Tech decisions → Concurrency)
+rather than full three-attempt retry cycles, since a request that far out
+is expected to time out rather than genuinely fail — it is still made
+and still logged every run, not skipped.
+
+NRE's fare-release horizon is observed, not guaranteed: measured at 94
+days (13.4 weeks) ahead as of the 2026-08-31/09-01 measurements in
+`docs/plans/002-speed-up-price-check-run.md` §1.7 — more than the
+"roughly 12 weeks" this doc previously assumed. Treat 94 as one season's
+observation, expected to drift at NRE's own December/May timetable-change
+dates, not a hard constant.
 
 ## Marking a date as already booked (no coding involved)
 
