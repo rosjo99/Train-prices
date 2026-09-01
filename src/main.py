@@ -31,7 +31,7 @@ ARTIFACTS_DIR = Path("artifacts")
 # purely a wall-clock lever, not politeness pacing — picked to comfortably
 # fit a GitHub-hosted runner's CPU/memory running that many headless
 # Chromium instances at once.
-PARALLEL_DATES = 5
+PARALLEL_DATES = 8
 
 # National Rail Enquiries only releases fares up to a daily-rolling
 # window — past it, the page never makes its journey-planner XHR at all,
