@@ -300,10 +300,22 @@ def test_build_journey_planner_url_clamps_at_midnight_instead_of_rolling_date_ba
     [
         (403, TPE_JOURNEYS_GRID_URL, "ok", True),
         (500, TPE_JOURNEYS_GRID_URL, "ok", True),
-        (200, TPE_JOURNEYS_GRID_URL, "please solve this captcha challenge", True),
+        (200, TPE_JOURNEYS_GRID_URL, "please verify you are human", True),
         (200, TPE_JOURNEYS_GRID_URL, "are you a robot?", True),
         (200, TPE_JOURNEYS_GRID_URL, "ok", False),
         (None, TPE_JOURNEYS_GRID_URL, "ok", False),
+        # Regression test: TPE's own page bootstrap config harmlessly
+        # embeds a reCAPTCHA site key on every page load (GH Actions run
+        # 33530583374, page-2026-09-08.html's "googleRecaptchaKey" field).
+        # A bare "captcha" substring match previously misfired on this and
+        # must not classify it as blocked.
+        (
+            200,
+            TPE_JOURNEYS_GRID_URL,
+            '"googleRecaptchaKey":"6Le4ESkTAAAAAIW-1dS_obXeJ1oOlztiaNZ31hOE"',
+            False,
+        ),
+        (200, TPE_JOURNEYS_GRID_URL, "this mentions recaptcha somewhere", False),
     ],
 )
 def test_looks_blocked(status, url, content, expected):
@@ -431,13 +443,34 @@ def test_blocked_via_403_status_raises_blocked_error(monkeypatch):
         scraper.fetch_journey_search(date(2026, 9, 8), attempts=1)
 
 
-def test_blocked_via_captcha_content_raises_blocked_error(monkeypatch):
-    page = FakePage(responses=[], content="oops, a captcha challenge")
+def test_blocked_via_strong_marker_content_raises_blocked_error(monkeypatch):
+    page = FakePage(responses=[], content="oops, are you a robot?")
     factory = FakeCamoufoxFactory(pages=[page])
     install_fake_camoufox(monkeypatch, factory)
 
     with pytest.raises(scraper.BlockedError):
         scraper.fetch_journey_search(date(2026, 9, 8), attempts=1)
+
+
+def test_harmless_recaptcha_key_in_page_content_does_not_raise_blocked_error(monkeypatch):
+    """Regression test for a real production failure: TPE's own page
+    bootstrap config embeds a harmless reCAPTCHA site key on every page
+    load. GitHub Actions run 33530583374 failed every travel date
+    instantly with BlockedError because a bare "captcha" substring
+    matched "googleRecaptchaKey" (see page-2026-09-08.html). This must
+    not raise BlockedError, and the page must be able to succeed.
+    """
+    body = {"links": {}, "result": {"outward": []}}
+    page = FakePage(
+        responses=[_journey_plan_response(body)],
+        content='"googleRecaptchaKey":"6Le4ESkTAAAAAIW-1dS_obXeJ1oOlztiaNZ31hOE"',
+    )
+    factory = FakeCamoufoxFactory(pages=[page])
+    install_fake_camoufox(monkeypatch, factory)
+
+    result = scraper.fetch_journey_search(date(2026, 9, 8), attempts=1)
+
+    assert result == body
 
 
 def test_blocked_error_retried_at_most_once(monkeypatch, _no_real_sleep):
