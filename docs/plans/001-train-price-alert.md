@@ -300,6 +300,46 @@ as the default expectation for any UK train retailer's booking engine
 that isn't NRE, rather than assuming a new one is safe until proven
 otherwise. NRE remains the only viable retailer.
 
+**2026-09-01 follow-up — why a browser is needed at all, and why
+switching engines doesn't help:** TPE's page (like NRE's) is a
+client-rendered SPA — the raw HTML `curl` fetches contains no fare
+data, only a JS shell that reads config values
+(`apiHost:"api.tpexpress.co.uk"`, an `apiAccessToken`) and, per the
+downloaded JS bundle
+(`/js/common.<hash>.js`), calls that API with headers
+`x-access-token: <apiAccessToken>` and `x-trace-token:
+<name>@<version>/<generated-id>`. This API host is *not*
+connection-blocked the way the booking-engine hostnames are — plain
+`curl` against `https://api.tpexpress.co.uk/` gets a real HTTP
+response (403 without the token, 503 for a guessed
+`/journeys-grid/...` path with it), unlike the domain-wide resets
+elsewhere in this section. That's a live, reachable API, not another
+dead end — but reproducing its real request from the JS bundle's
+minified source, without being able to observe an actual browser
+making the call, only got guesses (wrong path shape, missing
+signature/session parameters), never real fare data.
+
+Tested whether the *browser itself* was the avoidable part: Playwright
+Firefox (headless) against the same deep-link — 5 automatic retries,
+each independently reset after ~6s (confirmed via the outbound proxy's
+own status log), same signature as Chromium. Headed (non-headless)
+Chromium under Xvfb, same deep-link — also `net::ERR_CONNECTION_RESET`.
+So the block is neither Chromium-specific nor headless-specific: every
+Playwright-launched browser tried is blocked identically, while `curl`
+from the same environment is not. The most likely explanation is a
+TLS/HTTP2 connection fingerprint (JA3/JA4-style) specific to
+Playwright's bundled browser builds, checked before any page content
+or JS loads — a known class of technique several bot-management
+vendors use specifically because it catches automation frameworks
+regardless of which browser engine or headless mode they drive.
+Working around a fingerprint check like this would mean TLS
+fingerprint spoofing (e.g. `curl_cffi`-style impersonation, a
+patched/rebuilt browser, or a MITM proxy that rewrites the TLS
+handshake) — squarely the kind of stealth tooling CLAUDE.md's standing
+"no proxies, stealth plugins, or CAPTCHA-solving" decision already
+rules out, not a new gap to close. NRE remains the only viable
+retailer.
+
 ---
 
 ## 2. Decisions not already in CLAUDE.md
