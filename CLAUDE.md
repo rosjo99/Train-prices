@@ -100,20 +100,24 @@ got here.
   The date closest to `FULL_RETRY_HORIZON_DAYS` is dispatched first
   (`src.main._dispatch_order`, gated by
   `src.main.BOUNDARY_PRIORITY_ZONE_DAYS`) since it's predictably the
-  slowest to fail. `FULL_RETRY_HORIZON_DAYS` = 400 days — deliberately
-  widened from the old NRE-derived value of 95 (itself based on 94 days
-  measured three times against NRE's fare-release horizon specifically;
-  that measurement does not transfer to TPE, the retailer this repo now
-  scrapes). Nobody has measured TPE's own fare-release horizon from this
-  codebase; the only evidence about it is **the user's own domain
-  knowledge of the retailer** — not a measurement this repo has made —
-  that TPE sells tickets many months further ahead than NRE did. 400 is
-  therefore a deliberately generous placeholder chosen so that no
-  candidate date within the current school year is demoted to
-  `SPECULATIVE_ATTEMPTS`, rather than a measured or computed value —
-  see `docs/plans/005-migrate-to-tpe.md` §7.1. The speculative-attempt
-  code path itself is untouched and re-arms the moment a real TPE horizon
-  is measured; until then, `MAX_CONSECUTIVE_FAILURES` bounds the cost of
+  slowest to fail. `FULL_RETRY_HORIZON_DAYS` = 168 days (24 weeks) — set
+  from Great Western Railway (GWR), not TPE: GWR is the train operating
+  company that actually sets fares on this Oxford → Paddington route
+  (every fare object in the captured TPE fixture has its `"setter"`
+  field pointing at `/data/tocs/GW`), and the user has confirmed, from
+  their own domain knowledge of GWR — not a measurement this repo has
+  made — that GWR releases weekday advance tickets up to 24 weeks ahead.
+  This superseded the old 400-day placeholder set during the NRE→TPE
+  migration (itself widened from the NRE-derived value of 95, based on
+  94 days measured three times against NRE's fare-release horizon
+  specifically — a measurement that never transferred to TPE/GWR). 168
+  is comfortably inside the candidate range a run this school year can
+  produce, so it reactivates rather than suspends the speculative-attempt
+  machinery: dates beyond it are demoted to `SPECULATIVE_ATTEMPTS`, and
+  the boundary-priority dispatch above now has a real boundary to work
+  with — see `docs/plans/005-migrate-to-tpe.md` §7.1's addendum. The
+  speculative-attempt code path itself remains the reactive fallback if
+  168 turns out wrong; `MAX_CONSECUTIVE_FAILURES` bounds the cost of
   this assumption being wrong. Per-attempt timing: page-result wait
   budget 20s, navigation timeout 60s (`NAVIGATION_TIMEOUT_SECONDS`), poll
   interval 250ms, scrape-retry backoff 5s/10s — see `src/scraper.py`.
@@ -185,21 +189,29 @@ Early in a term this is 100+ dates per run, checked in full every run
 by design so prices stay fresh — accepted tradeoff, mainly wall-clock
 run time, not IP reputation (TPE has shown no bot protection to trip).
 See `docs/plans/001-train-price-alert.md` §2.2/§1.4. Concurrency
-(`PARALLEL_DATES`) is unchanged from the NRE era, but the
+(`PARALLEL_DATES`) is unchanged from the NRE era. The
 `FULL_RETRY_HORIZON_DAYS` single-attempt zone that used to also cut run
-time is currently **dormant** (see Tech decisions → Concurrency) — so
-run time should not currently be assumed to be as short as the old NRE-
-era projections implied.
+time was dormant while that constant sat at a 400-day placeholder past
+every candidate date; it is now **active** — see Tech decisions →
+Concurrency — since `FULL_RETRY_HORIZON_DAYS` = 168 days falls well
+within the candidate range, so dates beyond it get demoted to a single
+attempt and run time should be somewhat shorter than the fully-dormant
+placeholder era implied, though still not directly comparable to old
+NRE-era projections.
 
 No TPE fare-release horizon has been measured from this codebase — the
 94-day figure NRE-era runs measured (`docs/plans/002-speed-up-price-check-run.md`
-§1.7) was specific to NRE and is not evidence about TPE. The working
-assumption until it is measured (per the user's own domain knowledge of
-the retailer, not a measurement — see `docs/plans/005-migrate-to-tpe.md`
-§7.1) is that every candidate date within the current school year is
-priceable by TPE; `FULL_RETRY_HORIZON_DAYS` is set generously past all of
-them accordingly. §9 of that plan is what should replace this belief with
-a real number from the first full live run.
+§1.7) was specific to NRE and is not evidence about TPE. Fares on this
+route, though, are actually set by Great Western Railway (GWR), not TPE
+itself — confirmed via the `"setter"` field (`/data/tocs/GW`) on every
+fare object in the captured TPE fixture — and the user has confirmed,
+from their own domain knowledge of GWR (not a measurement this repo has
+made), that GWR releases weekday advance tickets up to 24 weeks
+(168 days) ahead. `FULL_RETRY_HORIZON_DAYS` is set to that figure
+accordingly (see `docs/plans/005-migrate-to-tpe.md` §7.1's addendum).
+§9 of that plan is what should replace this belief with a real number
+from the first full live run, should one ever be measured directly
+against TPE/GWR.
 
 ## Marking a date as already booked (no coding involved)
 

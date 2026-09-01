@@ -659,6 +659,18 @@ treatment: line ~31 ("NRE has no bot protection to trip"), line ~63, and
 reword to TPE, and to "TPE's fare-release window has moved closer than
 FULL_RETRY_HORIZON_DAYS assumes, or TPE is unavailable".
 
+**Update, day of merge (2026-09-01):** the 400-day placeholder above has
+been revised down to **`FULL_RETRY_HORIZON_DAYS = 168`** (24 weeks). The
+captured TPE fixture shows every fare object's `"setter"` field pointing
+at `/data/tocs/GW` — i.e. Great Western Railway, not TPE, is the train
+operating company actually setting fares on this Oxford → Paddington
+route. Per the user's own domain knowledge of GWR (not a measurement
+this repo has made), GWR releases weekday advance tickets up to 24
+weeks (168 days) ahead. 168 is comfortably inside the candidate range
+this school year can produce, so — unlike 400 — it reactivates rather
+than suspends the speculative-attempt/boundary-priority machinery
+described above.
+
 ### 7.2 Per-date wall-clock cost under Camoufox is unmeasured
 
 Everything in plans 002/003 about per-attempt cost (~12s), the 51s
