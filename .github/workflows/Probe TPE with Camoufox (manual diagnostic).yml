@@ -63,4 +63,25 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      - name: Capture TPE journey-plan fixture (07:25 + 07:30)
+        if: always()
+        run: |
+          python scripts/capture_fixture_tpe.py \
+            --origin OXF --destination PAD \
+            --datetime "2026-12-18T07:20" \
+            --out /tmp/tpe-fixture.json
+
+      - name: Print captured fixture
+        if: always()
+        run: cat /tmp/tpe-fixture.json 2>/dev/null || echo "(no fixture written)"
+
+      - name: Upload fixture artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tpe-fixture
+          path: /tmp/tpe-fixture.json
+          if-no-files-found: warn
+          retention-days: 14
+
 
