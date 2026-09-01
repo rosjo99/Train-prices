@@ -28,29 +28,57 @@ logger = logging.getLogger(__name__)
 ARTIFACTS_DIR = Path("artifacts")
 
 # How many travel dates are scraped concurrently, each getting its own
-# browser. NRE has no bot protection to trip (see CLAUDE.md), so this is
-# purely a wall-clock lever, not politeness pacing — picked to comfortably
-# fit a GitHub-hosted runner's CPU/memory running that many headless
-# Chromium instances at once.
+# browser. TPE has shown no bot protection to trip (see CLAUDE.md), so
+# this is purely a wall-clock lever, not politeness pacing — picked to
+# comfortably fit a GitHub-hosted runner's CPU/memory running that many
+# browser instances at once. Chosen against Playwright/Chromium; now that
+# src.scraper drives Camoufox/Firefox instead (docs/plans/005-migrate-to-
+# tpe.md), eight concurrent Firefox instances is a genuinely different
+# memory/CPU proposition and this number has not been re-validated — see
+# that plan's §7.2. Left unchanged here deliberately, so the first live
+# run under the new retailer/browser isn't also confounded by a
+# concurrency change at the same time; it's the first thing to revisit if
+# that run is slow or shows a spike of otherwise-inexplicable timeouts.
 PARALLEL_DATES = 8
 
-# National Rail Enquiries only releases fares up to a daily-rolling
-# window — past it, the page never makes its journey-planner XHR at all,
-# so the scraper times out every time, not just occasionally. Measured at
-# exactly 94 days three times with zero drift: 2026-08-31 (bracketed
-# tightly — good at +94, failed at +95) and two runs on 2026-09-01 (both
-# good at +94, next candidate +98). All three measurements were taken
-# between 07:41 and 09:52 London time, so the horizon at the 00:37 UTC
-# cron firing is unmeasured — see docs/plans/003-scheduler-and-retry-
-# horizon.md §1.1/§5.2. Set one day past the observed value: beyond it, a
-# timeout is the expected answer, not a fault, so retrying it three times
-# just buys the same answer three times slower (see SPECULATIVE_ATTEMPTS
-# below) — but 95 keeps one day of margin against the horizon drifting
-# further out before this constant is next updated (plan 003 §4.1). This
-# affects attempt count only — it is not a cap on which dates get
-# checked; MAX_CONSECUTIVE_FAILURES and term_dates.LAST_KNOWN_DATE are
-# what bound that.
-FULL_RETRY_HORIZON_DAYS = 95
+# How many days out a travel date can be and still get the full 3-attempt
+# retry budget (see SPECULATIVE_ATTEMPTS below) rather than being demoted
+# to a single attempt.
+#
+# The 94-day figure this constant used to be based on (measured three
+# times, zero drift — docs/plans/003-scheduler-and-retry-horizon.md §1.1)
+# was National Rail Enquiries' fare-release horizon specifically. It says
+# nothing about TransPennine Express, the retailer this repo now scrapes
+# (docs/plans/005-migrate-to-tpe.md) — nobody has measured TPE's release
+# horizon from this codebase. The only evidence available about it is the
+# user's own domain knowledge of the retailer (stated 2026-09-01, during
+# the TPE migration): TPE is understood to sell tickets many months
+# further ahead than NRE's ~94-day window. That's a person's knowledge of
+# the retailer, not a live measurement this repo has made, and is treated
+# accordingly — as a deliberately generous placeholder, not a finding.
+#
+# So this constant is set past every candidate date any run this school
+# year can produce (term_dates.LAST_KNOWN_DATE is currently Thu 8 Jul
+# 2027, ~310 days from 2026-09-01): 400 is a plain, human-editable
+# integer chosen to comfortably clear that without being a computed
+# expression that would silently drift when LAST_KNOWN_DATE is next
+# updated. This suspends the speculative-single-attempt optimisation
+# below rather than guessing at a new precise TPE number — SPECULATIVE_
+# ATTEMPTS and the speculative-zone code path are NOT removed, they're
+# just dormant until a real TPE horizon is measured (docs/plans/005-
+# migrate-to-tpe.md §7.1/§9), at which point re-arming them is a one-
+# constant change back to something close to the measured value plus a
+# day of margin, exactly like plan 003 did for NRE.
+#
+# Widening this from 95 costs wall-clock time only, and only if TPE's
+# real horizon turns out to be closer than believed: a doomed far-out
+# date would get 3 attempts instead of 1. MAX_CONSECUTIVE_FAILURES below
+# is what bounds that cost — it's the reactive backstop for exactly this
+# assumption being wrong, and remains untouched. This constant affects
+# attempt count only — it is not a cap on which dates get checked;
+# MAX_CONSECUTIVE_FAILURES and term_dates.LAST_KNOWN_DATE are what bound
+# that.
+FULL_RETRY_HORIZON_DAYS = 400
 
 # How many attempts a date beyond FULL_RETRY_HORIZON_DAYS gets. It's still
 # fetched, parsed, logged, and eligible to alert — just with one attempt
@@ -60,8 +88,9 @@ FULL_RETRY_HORIZON_DAYS = 95
 SPECULATIVE_ATTEMPTS = 1
 
 # Reactive backstop for when the static FULL_RETRY_HORIZON_DAYS assumption
-# turns out wrong for a given run (NRE having a bad day, or its release
-# lag drifting past the horizon before this constant is updated). Once
+# turns out wrong for a given run (TPE having a bad day, or its actual
+# release horizon being closer than the widened 400-day placeholder
+# above assumes). Once
 # this many dates in a row fail, stop submitting any further dates rather
 # than spending retry budget on every remaining date of the school year.
 # Counted strictly in ascending travel-date order on the main thread as
@@ -192,8 +221,8 @@ def _log_stopped_early(
 ) -> None:
     logger.warning(
         "[%s] %d consecutive dates failed — stopping early; this suggests "
-        "either NRE's fare-release window has moved closer than "
-        "FULL_RETRY_HORIZON_DAYS (%d days) assumes, or NRE is unavailable; "
+        "either TPE's fare-release window has moved closer than "
+        "FULL_RETRY_HORIZON_DAYS (%d days) assumes, or TPE is unavailable; "
         "%d further candidate date(s) were not attempted; %d already in "
         "flight will be allowed to finish and are still logged",
         last_failed_date.isoformat(),

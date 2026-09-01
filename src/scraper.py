@@ -1,38 +1,46 @@
-"""Playwright-driven scraper for National Rail Enquiries' journey planner.
+"""Camoufox-driven scraper for TransPennine Express' own booking engine
+(ticket.tpexpress.co.uk journeys-grid).
 
-Playwright is deliberately **not** imported at module level. Importing this
-module must never require the Playwright browsers to be installed (they're
-a ~300MB download only needed at scrape time, e.g. in CI or when actually
+Camoufox is deliberately **not** imported at module level (neither is
+Playwright, which Camoufox drives under the hood). Importing this module
+must never require the Camoufox browser build to be installed (it's a
+sizeable download only needed at scrape time, e.g. in CI or when actually
 running a check) — `import src.scraper` must succeed in any environment,
-including one with no browsers installed at all, so unit tests for the rest
-of the codebase never need a browser. Every `from playwright.sync_api import
-...` lives inside the functions that actually launch a browser.
+including one with no browser installed at all, so unit tests for the
+rest of the codebase never need a browser. Every `from camoufox.sync_api
+import ...` (and every `from playwright.sync_api import ...`) lives
+inside the functions that actually launch a browser.
 
-This module receives no secrets and must never be given any — nothing here
-should ever end up logging an API key or similar. It navigates to a public
-results page; nothing it does is authenticated.
+This module receives no secrets and must never be given any — nothing
+here should ever end up logging an API key or similar. It navigates to a
+public results page; nothing it does is authenticated.
 
-Terminology: "attempt" = one browser launch + navigation + wait cycle for a
-single travel date. `fetch_journey_search` retries failed attempts with
+Terminology: "attempt" = one browser launch + navigation + wait cycle for
+a single travel date. `fetch_journey_search` retries failed attempts with
 backoff (see RETRY_BACKOFF_SECONDS), each attempt getting a brand new
 browser context.
 
-Why National Rail Enquiries and not Trainline: Trainline sits behind
-DataDome bot protection (confirmed blocked on GitHub-hosted runners, see
-CLAUDE.md's Tech decisions and docs/plans/001-train-price-alert.md §1.1).
-NRE has no bot protection at all (18+ probe runs, zero CAPTCHA/block
-markers). NRE's journey-planner page also loads third-party ad/tracking
-scripts, one of which was observed — only during *interactive* UI-driven
-probing (filling the form, clicking through), never via the deep-link
-approach this module actually uses — redirecting the whole tab to a
-Booking.com hotel search. This module never drives that UI: it navigates
-straight to a fully-parameterised deep-link URL (see
-config.JOURNEY_PLANNER_URL_TEMPLATE) and reads the same-origin XHR the
-page itself makes to config.JOURNEY_PLANNER_API_HOST — no form-filling, no
-button clicks, and confirmed across every deep-link probe run to load
-straight into real results with no redirect. The iframe/navigation guards
-below are kept anyway as cheap defense in depth for an unattended daily
-job, since the ad ecosystem on the page is outside our control.
+Why TransPennine Express and not National Rail Enquiries (the original
+retailer) or Trainline: Trainline sits behind DataDome bot protection
+(confirmed blocked on GitHub-hosted runners — see CLAUDE.md's Tech
+decisions and docs/plans/001-train-price-alert.md §1.1). NRE worked but
+this repo migrated off it — see docs/plans/005-migrate-to-tpe.md for the
+full rationale. TPE showed no bot protection at all across the probe run
+and the fixture-capture run (no CAPTCHA, block page, or challenge; see
+BLOCK_MARKERS below). This module never drives TPE's interactive UI: it
+navigates straight to a fully-parameterised deep-link URL (see
+config.JOURNEY_PLANNER_URL_TEMPLATE) and reads the same-origin POST the
+page itself makes to config.JOURNEY_PLANNER_API_HOST (see
+config.JOURNEY_PLANNER_API_PATH) — no form-filling, no button clicks. The
+iframe/navigation guards below are kept anyway as cheap defense in depth
+for an unattended daily job, since the page loads third-party scripts
+(Usercentrics CMP, Google Maps, PayPal) outside our control — see
+HijackedError's docstring.
+
+Why Camoufox: CLAUDE.md mandates Camoufox for booking platforms other
+than NRE, and it's what was validated live against the real TPE site (see
+scripts/capture_fixture_tpe.py, the reference this module's launch shape
+was copied from verbatim).
 """
 
 from __future__ import annotations
@@ -40,7 +48,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import date
+from datetime import date, datetime, time as dt_time, timedelta
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlparse
@@ -49,29 +57,30 @@ from src import config
 
 logger = logging.getLogger(__name__)
 
-# A current desktop Chrome UA string. Update occasionally.
-USER_AGENT = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
-    "(KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
-)
-
 # Timeout for page.goto itself (navigation only — not the post-navigation
 # wait for results, see PAGE_BUDGET_SECONDS below). Kept separate so the
 # poll budget can be tuned independently of how long we'll wait for the
 # page to even finish loading.
-NAVIGATION_TIMEOUT_SECONDS: float = 20.0
+#
+# PROVISIONAL, not measured: this and PAGE_BUDGET_SECONDS below were
+# tuned against NRE + headless Chromium (docs/plans/002-speed-up-price-
+# check-run.md §1) and that tuning does not transfer to Camoufox/Firefox
+# with humanize=True, which launches and interacts more slowly by an
+# unmeasured amount. Adopted here as the starting point are the working
+# values from scripts/capture_fixture_tpe.py's validated live run (a 60s
+# navigation timeout, a 20s result wait) — see
+# docs/plans/005-migrate-to-tpe.md §4.2 item 8. Re-tighten both from the
+# first full live run's real timings (see that plan's §7.2/§9) rather
+# than assuming these are already right.
+NAVIGATION_TIMEOUT_SECONDS: float = 60.0
 
 # Post-navigation poll deadline: how long we'll wait, after navigation,
-# for either the journey-planner XHR to fire or the results DOM to
-# render. Monkeypatch this module attribute in tests instead of actually
-# waiting. Every observed successful attempt captured the XHR ~2.4s after
-# navigation settled (2026-09-03 attempt 1: 2.36s; 2026-09-04 attempt 2:
-# 2.40s), and the failure mode is binary, not slow — 2026-09-04's first
-# attempt sat the full 20s with no XHR, then the very next attempt got
-# one in 2.4s. Waiting past ~10s has never once converted a failure into
-# a success, so 10s keeps ~4x headroom over the observed happy path
-# without paying for the old 20s on every doomed date.
-PAGE_BUDGET_SECONDS: float = 10.0
+# for the journey-plan POST response to arrive. Monkeypatch this module
+# attribute in tests instead of actually waiting. See
+# NAVIGATION_TIMEOUT_SECONDS' comment: provisional, carried over from
+# scripts/capture_fixture_tpe.py's validated value, not measured against
+# a full live run of this scraper yet.
+PAGE_BUDGET_SECONDS: float = 20.0
 
 # How long to pause the polling loop between checks, in milliseconds,
 # passed to Page.wait_for_timeout (a no-op wait in fake pages used by
@@ -79,16 +88,16 @@ PAGE_BUDGET_SECONDS: float = 10.0
 POLL_INTERVAL_MS = 250
 
 # Retry backoff, in seconds, indexed by (attempt number - 1), clamped to
-# the last entry for any further attempts. The one observed recovery
-# (2026-09-04: attempt 1 failed, attempt 2 succeeded) came from a fresh
-# browser context on the very next attempt, not from having waited 10s —
-# but this is still an unattended job hitting someone else's site, so a
-# real (if shorter) backoff stays rather than going to zero.
+# the last entry for any further attempts. Carried over unchanged from
+# the NRE-era scraper — this is still an unattended job hitting someone
+# else's site, so a real (if shorter) backoff stays rather than going to
+# zero.
 RETRY_BACKOFF_SECONDS: tuple[int, ...] = (5, 10)
 
-# Defense-in-depth block markers, checked against page URL/content. NRE
-# itself has never shown any of these (confirmed "none" on every probe
-# run) — this exists in case that ever changes, not because it's expected.
+# Defense-in-depth block markers, checked against page URL/content. TPE
+# itself has shown none of these across either the diagnostic Camoufox
+# probe or the real fixture-capture run — this exists in case that ever
+# changes, not because it's expected.
 BLOCK_MARKERS: tuple[str, ...] = (
     "captcha",
     "are you a robot",
@@ -97,21 +106,16 @@ BLOCK_MARKERS: tuple[str, ...] = (
     "cloudflare-challenge",
 )
 
-# UNVERIFIED HYPOTHESIS: a CSS selector for the results list, used only as
-# a fallback when the journey-planner XHR never fires. Not confirmed
-# against the real site — every probe run captured the XHR successfully,
-# so this fallback has never actually been exercised. If it never matches
-# in practice, the fallback simply never fires and callers fall through to
-# TimeoutScrapeError, which is the safe failure mode.
-RESULTS_DOM_SELECTOR = "[id^='outward-journey-']"
-
-# Best-effort cookie-banner selectors, tried in order. Confirmed present
-# and dismissable via the first selector across every probe run. None of
-# these are fatal if absent or if clicking fails — see
-# _dismiss_cookie_banner.
+# Best-effort cookie-banner selectors, tried in order. TPE's Usercentrics
+# banner was confirmed dismissable via the first selector here
+# (`button:has-text('Accept All')`, run 33527007099 — see
+# docs/plans/005-migrate-to-tpe.md §1.5); the `uc-*` variants are kept
+# around it as fallbacks. None of these are fatal if absent or if
+# clicking fails — see _dismiss_cookie_banner.
 COOKIE_BANNER_SELECTORS: tuple[str, ...] = (
-    "#onetrust-accept-btn-handler",
     "button:has-text('Accept All')",
+    "[data-testid='uc-accept-all-button']",
+    "#uc-btn-accept-banner",
     "button:has-text('Accept')",
 )
 
@@ -125,18 +129,22 @@ class BlockedError(ScraperError):
 
 
 class HijackedError(ScraperError):
-    """Raised when the page navigates away from nationalrail.co.uk.
+    """Raised when the page navigates away from tpexpress.co.uk entirely.
 
-    Distinct from BlockedError: this isn't NRE blocking us, it's a
-    third-party ad/tracking script on the page redirecting the tab
-    elsewhere (observed during interactive UI probing — see this module's
-    docstring). Never observed via the deep-link approach used here, but
-    guarded against regardless.
+    Distinct from BlockedError: this isn't TPE blocking us, it's some
+    third-party script on the page (Usercentrics, Google Maps, PayPal)
+    redirecting the tab elsewhere. No hijack of this kind was ever
+    observed on TPE, on either the diagnostic probe or the fixture-
+    capture run — this is defense in depth for an unattended job on a
+    page whose third-party script ecosystem is outside our control, not a
+    documented TPE behaviour.
     """
 
 
 class TimeoutScrapeError(ScraperError):
-    """Raised when no usable data (XHR or DOM) appears within the page budget."""
+    """Raised when no usable data (the journey-plan response) appears
+    within the page budget.
+    """
 
 
 def _ensure_logging_configured() -> None:
@@ -154,23 +162,42 @@ def _ensure_logging_configured() -> None:
 
 
 def _build_journey_planner_url(travel_date: date) -> str:
-    """Build the deep-linked journey-planner URL for `travel_date`.
+    """Build the deep-linked journeys-grid URL for `travel_date`.
 
-    Anchored at the earliest of config.TARGET_DEPARTURES: NRE's results
-    page lists journeys departing from that time onward, so a single
-    fetch at (e.g.) 07:25 also picks up the 07:30 departure — confirmed
-    live, both target trains appeared in one response when anchored at
-    07:25 (see docs/plans/001-train-price-alert.md Task 3).
+    Anchored a few minutes before the earliest of config.TARGET_DEPARTURES
+    (see config.ANCHOR_OFFSET_MINUTES's comment for why): TPE's frontend
+    hardcodes a fixed "numJourneys": 3 in its own POST body, with no lever
+    exposed by this deep-link to raise it, so anchoring exactly at the
+    earliest target risks an earlier direct service using up a "slot"
+    before it and pushing the later target out of the window (confirmed
+    live — see docs/plans/005-migrate-to-tpe.md §1.4).
+
+    Edge case: if subtracting ANCHOR_OFFSET_MINUTES from the earliest
+    target would cross midnight backwards (e.g. a target departure of
+    00:02 with a 5-minute offset), the anchor is clamped to 00:00 rather
+    than rolling the date back onto the previous day — rolling the date
+    back would silently query the wrong travel date, which is worse than
+    losing a few minutes of anchor lead time. Not reachable with today's
+    07:25/07:30 targets, but handled anyway.
     """
     earliest = min(config.TARGET_DEPARTURES)
-    hour, minute = earliest.split(":")
-    return config.build_journey_planner_url(travel_date, hour, minute)
+    hour, minute = (int(part) for part in earliest.split(":"))
+    anchor_dt = datetime.combine(travel_date, dt_time(hour, minute)) - timedelta(
+        minutes=config.ANCHOR_OFFSET_MINUTES
+    )
+    if anchor_dt.date() < travel_date:
+        anchor_hour, anchor_minute = "00", "00"
+    else:
+        anchor_hour = f"{anchor_dt.hour:02d}"
+        anchor_minute = f"{anchor_dt.minute:02d}"
+    return config.build_journey_planner_url(travel_date, anchor_hour, anchor_minute)
 
 
 def _looks_blocked(status: int | None, url: str | None, content: str | None) -> bool:
-    """Pure block-detection logic: a non-2xx XHR status, or a block marker
-    anywhere in the current page URL or content. See BLOCK_MARKERS'
-    comment — this is defense in depth, not a documented NRE behaviour.
+    """Pure block-detection logic: a non-2xx response status, or a block
+    marker anywhere in the current page URL or content. See
+    BLOCK_MARKERS' comment — this is defense in depth, not a documented
+    TPE behaviour.
     """
     if status is not None and status >= 400:
         return True
@@ -179,26 +206,26 @@ def _looks_blocked(status: int | None, url: str | None, content: str | None) -> 
 
 
 def _looks_hijacked(current_url: str) -> bool:
-    """True once the page has navigated away from nationalrail.co.uk
+    """True once the page has navigated away from tpexpress.co.uk
     entirely (see HijackedError). An empty/unparsable URL is not treated
     as hijacked — that's "no navigation has happened yet", not "hijacked
-    elsewhere".
+    elsewhere". config.TPE_HOST_SUFFIX deliberately covers www., ticket.
+    and api. subdomains, so the page's own same-origin API calls never
+    trip this guard.
     """
     if not current_url:
         return False
     host = urlparse(current_url).hostname or ""
-    return not host.endswith(config.NRE_HOST_SUFFIX)
+    return not host.endswith(config.TPE_HOST_SUFFIX)
 
 
 def _is_journey_planner_response(url: str) -> bool:
-    """True only for the specific journey-search endpoint, not just any
+    """True only for the specific journey-plan endpoint, not just any
     response from JOURNEY_PLANNER_API_HOST. The host also serves sibling
-    endpoints (e.g. "/fare-info") for other page data — matching on host
-    alone let a sibling endpoint's response overwrite the real one
-    whenever it happened to arrive later in the same page load, which
-    produced a response with no "outwardJourneys" key at all (observed
-    live: a real run's captured "body" turned out to be the "/fare-info"
-    response instead).
+    endpoints (observed live: "/jp/plusbus") for other page data —
+    matching on host alone let a sibling endpoint's response overwrite
+    the real one whenever it happened to arrive later in the same page
+    load.
     """
     if config.JOURNEY_PLANNER_API_HOST not in url:
         return False
@@ -206,7 +233,8 @@ def _is_journey_planner_response(url: str) -> bool:
 
 
 def _make_response_handler(captured: dict[str, Any]) -> Callable[[Any], None]:
-    """Build a Page "response" handler that captures the journey-planner XHR.
+    """Build a Page "response" handler that captures the journey-plan
+    POST response.
 
     Stores status/url/body into `captured` in place. Never raises — a
     malformed or non-JSON response body is recorded as body=None rather
@@ -228,7 +256,7 @@ def _make_response_handler(captured: dict[str, Any]) -> Callable[[Any], None]:
             body = response.json()
         except Exception:
             logger.warning(
-                "journey-planner response body was not valid JSON (url=%s)", url
+                "journey-plan response body was not valid JSON (url=%s)", url
             )
             body = None
         captured["status"] = status
@@ -240,15 +268,15 @@ def _make_response_handler(captured: dict[str, Any]) -> Callable[[Any], None]:
 
 def _make_route_handler() -> Callable[[Any], None]:
     """Build a Playwright route handler that blocks cross-origin iframe
-    documents and backstops any main-frame navigation away from NRE.
+    documents and backstops any main-frame navigation away from TPE.
 
-    Defense in depth against the ad-hijack behaviour described in this
-    module's docstring — never observed via the deep-link approach this
-    scraper uses, but the ad ecosystem on the page is outside our control
-    and this costs nothing on the happy path. Must never raise: an
-    unhandled exception here (e.g. from a Service Worker request, which
-    has no associated frame) would corrupt request handling for the whole
-    browser session, not just this one request.
+    Defense in depth against the hijack behaviour described in
+    HijackedError's docstring — never observed on TPE, but the ad/
+    tracking ecosystem on the page is outside our control and this costs
+    nothing on the happy path. Must never raise: an unhandled exception
+    here (e.g. from a Service Worker request, which has no associated
+    frame) would corrupt request handling for the whole browser session,
+    not just this one request.
     """
 
     def _route_handler(route: Any) -> None:
@@ -266,7 +294,7 @@ def _make_route_handler() -> Callable[[Any], None]:
             )
             if is_subframe_doc:
                 sub_host = urlparse(request.url).hostname or ""
-                if not sub_host.endswith(config.NRE_HOST_SUFFIX):
+                if not sub_host.endswith(config.TPE_HOST_SUFFIX):
                     route.abort()
                     return
 
@@ -277,9 +305,9 @@ def _make_route_handler() -> Callable[[Any], None]:
             )
             if is_main_frame_nav:
                 host = urlparse(request.url).hostname or ""
-                if not host.endswith(config.NRE_HOST_SUFFIX):
+                if not host.endswith(config.TPE_HOST_SUFFIX):
                     logger.warning(
-                        "blocking main-frame navigation away from NRE: %s",
+                        "blocking main-frame navigation away from tpexpress.co.uk: %s",
                         request.url,
                     )
                     route.fulfill(status=200, content_type="text/html", body="<html></html>")
@@ -298,36 +326,11 @@ def _dismiss_cookie_banner(page: Any) -> None:
             locator = page.locator(selector)
             if locator.count() > 0:
                 locator.first.click(timeout=3000)
-                logger.info("dismissed cookie banner (selector=%s)", selector)
+                logger.info("dismissed cookie banner via %r", selector)
                 return
         except Exception:
             continue
     logger.info("no cookie banner dismissed (absent, or all selectors failed)")
-
-
-def _read_results_dom(page: Any) -> dict[str, Any] | None:
-    """Fallback for when the journey-planner XHR never fires.
-
-    Returns None when nothing is found, so the caller can raise
-    TimeoutScrapeError rather than pretend this succeeded. See
-    RESULTS_DOM_SELECTOR's comment: unverified, since every probe run
-    successfully captured the XHR and never needed this path.
-    """
-    try:
-        element = page.query_selector(RESULTS_DOM_SELECTOR)
-    except Exception:
-        logger.warning("DOM fallback selector query failed", exc_info=True)
-        return None
-    if element is None:
-        return None
-    try:
-        html = element.inner_html()
-    except Exception:
-        logger.warning("DOM fallback element had no readable inner_html", exc_info=True)
-        return None
-    if not html:
-        return None
-    return {"_source": "dom-fallback", "_raw_html": html}
 
 
 def _current_page_url(page: Any) -> str:
@@ -347,16 +350,20 @@ def _current_page_content(page: Any) -> str:
 def _wait_for_result(
     page: Any, captured: dict[str, Any], travel_date: date
 ) -> dict[str, Any]:
-    """Poll until the journey-planner XHR lands, a block/hijack is
-    detected, or the page budget runs out; falls back to the DOM; raises
-    TimeoutScrapeError if nothing usable ever appears.
+    """Poll until the journey-plan response lands, a block/hijack is
+    detected, or the page budget runs out. Raises TimeoutScrapeError if
+    nothing usable ever appears — there is no DOM fallback (see
+    docs/plans/005-migrate-to-tpe.md §4.2 item 9: no TPE results selector
+    has ever been captured or verified, so inventing one would be
+    guessing at a schema, and a truthful TimeoutScrapeError is the safer
+    failure mode than converting it into a misleading ParseError).
     """
     deadline = time.monotonic() + PAGE_BUDGET_SECONDS
     while True:
         current_url = _current_page_url(page)
         if _looks_hijacked(current_url):
             raise HijackedError(
-                f"navigated away from nationalrail.co.uk to {current_url!r} "
+                f"navigated away from tpexpress.co.uk to {current_url!r} "
                 f"while loading results for {travel_date.isoformat()}"
             )
         if _looks_blocked(
@@ -374,23 +381,16 @@ def _wait_for_result(
     if "body" in captured:
         if captured.get("status") is not None and captured["status"] >= 400:
             raise BlockedError(
-                f"journey-planner XHR returned HTTP {captured['status']}"
+                f"journey-plan response returned HTTP {captured['status']}"
             )
         body = captured["body"]
         if body is not None:
             return body
-        logger.warning(
-            "journey-planner XHR captured but body was not JSON; trying DOM fallback"
-        )
-
-    dom_result = _read_results_dom(page)
-    if dom_result is not None:
-        logger.info("journey-planner XHR never fired; used DOM fallback")
-        return dom_result
+        logger.warning("journey-plan response captured but body was not JSON")
 
     raise TimeoutScrapeError(
-        f"no journey-planner response and no DOM results within "
-        f"{PAGE_BUDGET_SECONDS}s for {travel_date.isoformat()}"
+        f"no journey-plan response within {PAGE_BUDGET_SECONDS}s for "
+        f"{travel_date.isoformat()}"
     )
 
 
@@ -440,60 +440,70 @@ def _write_failure_artifacts(
             logger.warning("could not write captured response", exc_info=True)
 
 
-def _launch_browser(playwright_module: Any) -> Any:
-    """Launch headless Chromium, translating a missing-binary error into a
-    clear, actionable message.
-    """
-    from playwright.sync_api import Error as PlaywrightError
+def _launch_browser(camoufox_cm: Any) -> Any:
+    """Enter a Camoufox context manager, translating a missing-binary
+    error into a clear, actionable message.
 
+    Camoufox is a context manager (`with Camoufox(...) as browser:`), and
+    the actual browser process is launched on `__enter__`, not on
+    construction — so that's the call this wraps. Camoufox's own missing-
+    browser exception type is not known (not guessed at here — see
+    docs/plans/005-migrate-to-tpe.md §4.2 item 3), so any exception is
+    caught here and its message inspected for the usual missing-binary
+    vocabulary before deciding how to re-raise.
+    """
     try:
-        return playwright_module.chromium.launch(
-            headless=True,
-            args=["--disable-blink-features=AutomationControlled", "--no-sandbox"],
-        )
-    except PlaywrightError as exc:
+        return camoufox_cm.__enter__()
+    except Exception as exc:
         message = str(exc)
-        if "Executable doesn't exist" in message or "playwright install" in message:
+        lowered = message.lower()
+        if any(
+            marker in lowered
+            for marker in ("camoufox", "fetch", "not found", "executable", "no such file")
+        ):
             raise ScraperError(
-                "Chromium binary not found. Run `playwright install chromium` "
+                "Camoufox browser not found. Run `python -m camoufox fetch` "
                 f"and retry. (original error: {message})"
             ) from exc
-        raise ScraperError(f"failed to launch Chromium: {message}") from exc
+        raise ScraperError(f"failed to launch Camoufox: {message}") from exc
 
 
 def _attempt_once(travel_date: date, *, artifacts_dir: Path | None) -> dict[str, Any]:
-    """One full browser launch + navigate + wait cycle. Always uses a fresh
-    browser and context. Raises ScraperError/BlockedError/HijackedError/
-    TimeoutScrapeError on failure, writing debug artifacts first if
-    artifacts_dir is set.
+    """One full browser launch + navigate + wait cycle. Always uses a
+    fresh browser and context. Raises ScraperError/BlockedError/
+    HijackedError/TimeoutScrapeError on failure, writing debug artifacts
+    first if artifacts_dir is set.
     """
+    from camoufox.sync_api import Camoufox, NewContext
     from playwright.sync_api import Error as PlaywrightError
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
-    from playwright.sync_api import sync_playwright
 
     url = _build_journey_planner_url(travel_date)
     captured: dict[str, Any] = {}
 
-    with sync_playwright() as p:
-        browser = None
-        page = None
+    # _attempt_once owns the Camoufox context manager itself (per plan);
+    # _launch_browser only wraps the __enter__() call, so a launch
+    # failure still gets translated into an actionable ScraperError.
+    camoufox_cm = Camoufox(headless=True, humanize=True, locale="en-GB")
+    browser = _launch_browser(camoufox_cm)
+    page = None
+    context = None
+    try:
         try:
-            browser = _launch_browser(p)
-
-            context = browser.new_context(
+            context = NewContext(
+                browser,
                 locale="en-GB",
                 timezone_id="Europe/London",
-                viewport={"width": 1440, "height": 900},
-                user_agent=USER_AGENT,
+                viewport={"width": 1366, "height": 768},
             )
             context.route("**/*", _make_route_handler())
             page = context.new_page()
             # Registered before navigating, per plan, so we never miss the
-            # journey-planner XHR racing the navigation itself.
+            # journey-plan response racing the navigation itself.
             page.on("response", _make_response_handler(captured))
 
             logger.info(
-                "[%s] navigating to journey-planner deep link: %s",
+                "[%s] navigating to journeys-grid deep link: %s",
                 travel_date.isoformat(),
                 url,
             )
@@ -512,8 +522,7 @@ def _attempt_once(travel_date: date, *, artifacts_dir: Path | None) -> dict[str,
                 logger.warning("cookie banner handling raised; continuing", exc_info=True)
 
             logger.info(
-                "[%s] waiting for journey-planner response or results DOM "
-                "(budget=%ss)",
+                "[%s] waiting for journey-plan response (budget=%ss)",
                 travel_date.isoformat(),
                 PAGE_BUDGET_SECONDS,
             )
@@ -525,11 +534,13 @@ def _attempt_once(travel_date: date, *, artifacts_dir: Path | None) -> dict[str,
             _write_failure_artifacts(page, artifacts_dir, travel_date, captured)
             raise ScraperError(f"unexpected Playwright error: {exc}") from exc
         finally:
-            if browser is not None:
+            if context is not None:
                 try:
-                    browser.close()
+                    context.close()
                 except Exception:
-                    logger.debug("error closing browser", exc_info=True)
+                    logger.debug("error closing context", exc_info=True)
+    finally:
+        camoufox_cm.__exit__(None, None, None)
 
 
 def fetch_journey_search(
@@ -538,7 +549,7 @@ def fetch_journey_search(
     artifacts_dir: Path | None = None,
     attempts: int = 3,
 ) -> dict[str, Any]:
-    """Fetch the raw journey-planner JSON for `travel_date`.
+    """Fetch the raw journey-plan JSON for `travel_date`.
 
     Retries on ScraperError/TimeoutScrapeError up to `attempts` times with
     backoff (RETRY_BACKOFF_SECONDS), a fresh browser context each time.

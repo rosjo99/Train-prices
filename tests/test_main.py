@@ -32,37 +32,68 @@ TERM_TIME_DAY = date(2026, 9, 7)  # Monday; tomorrow (Tue 8 Sep) is checkable
 
 
 def _iso(travel_date: date, hhmm: str) -> str:
+    # TPE's own "scheduledTime" is naive UK local wall-clock time (no UTC
+    # offset at all) — see src.parser._to_hhmm's docstring — so this is a
+    # plain, offset-free timestamp, unlike the NRE-era version of this
+    # helper.
     hour, minute = hhmm.split(":")
-    return f"{travel_date.isoformat()}T{hour}:{minute}:00+01:00"
+    return f"{travel_date.isoformat()}T{hour}:{minute}:00"
 
 
-def _journey(travel_date: date, departure: str, arrival: str | None = None, price: Decimal | None = None) -> dict:
-    fares = []
-    if price is not None:
-        pence = int(price * 100)
-        fares = [
-            {
-                "typeDescription": "Advance Single",
-                "railcardFares": [
-                    {"code": config.RAILCARD_CODE, "prices": {"adult": pence, "child": 0}}
-                ],
-            }
-        ]
-    return {
-        "id": 1,
-        "timetable": {
-            "scheduled": {
-                "departure": _iso(travel_date, departure),
-                "arrival": _iso(travel_date, arrival) if arrival else None,
-            }
-        },
-        "legs": [{}],
-        "fares": fares,
+def _journey(
+    travel_date: date, departure: str, arrival: str | None = None, price: Decimal | None = None
+) -> tuple[dict, dict]:
+    """Build one result.outward entry plus the `links` fragment it needs
+    to resolve (its journey object, and — if `price` is given — a single
+    fare and the ticket-type it points at). Returns (entry, links) so
+    _raw() can merge several of these into one {links, result} graph.
+    Each journey/fare gets a synthetic ref unique to (travel_date,
+    departure) so two journeys merged into one _raw() call never collide.
+    """
+    suffix = f"{travel_date.isoformat()}-{departure.replace(':', '')}"
+    journey_ref = f"/jp/journeys/test-{suffix}"
+    links: dict = {
+        journey_ref: {
+            "changes": 0,
+            "legs": [{}],
+            "origin": {"time": {"scheduledTime": _iso(travel_date, departure)}},
+            "destination": {
+                "time": {"scheduledTime": _iso(travel_date, arrival) if arrival else None}
+            },
+        }
     }
 
+    singles: list[str] = []
+    if price is not None:
+        fare_ref = f"/jp/fares/test-{suffix}"
+        ticket_type_ref = "/data/ticket-types/test-advance"
+        pence = int(price * 100)
+        links[fare_ref] = {
+            "totalPrice": pence,
+            "ticketType": ticket_type_ref,
+            "tickets": [
+                {
+                    "adults": 1,
+                    "children": 0,
+                    "price": pence,
+                    "railcard": f"/data/railcards/{config.RAILCARD_CODE}",
+                }
+            ],
+        }
+        links[ticket_type_ref] = {"name": "Advance Single"}
+        singles = [fare_ref]
 
-def _raw(*journeys: dict) -> dict:
-    return {"outwardJourneys": list(journeys)}
+    entry = {"journey": journey_ref, "fares": {"singles": singles, "returns": []}}
+    return entry, links
+
+
+def _raw(*journeys: tuple[dict, dict]) -> dict:
+    merged_links: dict = {}
+    outward: list[dict] = []
+    for entry, links in journeys:
+        merged_links.update(links)
+        outward.append(entry)
+    return {"links": merged_links, "result": {"outward": outward}}
 
 
 def _install_fake_scraper(monkeypatch: pytest.MonkeyPatch, results_by_date: dict) -> list[date]:
@@ -289,9 +320,13 @@ def test_scraper_fails_on_every_date_returns_1_no_email(monkeypatch):
 
 
 def test_five_consecutive_failed_dates_stops_early(monkeypatch):
-    # NRE only releases fares roughly 12 weeks ahead — dates beyond that
-    # horizon fail every time, so this guards against burning the full
-    # per-date retry budget on every remaining date of the school year.
+    # A far-out date whose fares the retailer hasn't released yet fails
+    # every time, so this guards against burning the full per-date retry
+    # budget on every remaining date of the school year. (Historically
+    # this was framed around NRE's ~12-week release window; TPE's own
+    # horizon is unmeasured — see src.main.FULL_RETRY_HORIZON_DAYS'
+    # comment — but the mechanism this test covers, MAX_CONSECUTIVE_
+    # FAILURES, is retailer-agnostic.)
     # PARALLEL_DATES=1 makes the scheduler strictly serial, so dispatch
     # (and therefore fetch) order is deterministic and d6 is provably
     # never submitted once d1-d5 latch the stop.
@@ -390,7 +425,7 @@ def test_five_consecutive_parse_failures_also_stops_early(monkeypatch):
     original_parse = main.parser.parse_journeys
 
     def _fake_parse(raw, travel_date):
-        if raw == {"outwardJourneys": []} and travel_date in (d2, d4):
+        if raw == _raw() and travel_date in (d2, d4):
             raise main.parser.ParseError("boom")
         return original_parse(raw, travel_date)
 
@@ -989,41 +1024,13 @@ def test_speculative_zone_dates_are_still_checked_and_logged(monkeypatch, _isola
     # FULL_RETRY_HORIZON_DAYS that *does* return a real cheap fare is
     # still fetched, still written to price-history.csv, and still
     # alerts — the hard constraint in plan 002 §4.
-    #
-    # FULL_RETRY_HORIZON_DAYS + 1 (96) days out from TERM_TIME_DAY (early
-    # September) lands in mid December — outside BST — so, unlike other
-    # tests in this file, the journey's timestamps can't use
-    # _journey()/_iso()'s hardcoded +01:00 offset (that would shift 07:25
-    # to 06:25 once converted to Europe/London and fail to match
-    # config.TARGET_DEPARTURES). Build the raw journey directly with the
-    # correct GMT (+00:00) offset.
     speculative_date = TERM_TIME_DAY + datetime_module.timedelta(
         days=main.FULL_RETRY_HORIZON_DAYS + 1
     )
     monkeypatch.setattr(
         main.term_dates, "checkable_dates", lambda start, end: [speculative_date]
     )
-    date_str = speculative_date.isoformat()
-    raw = _raw(
-        {
-            "id": 1,
-            "timetable": {
-                "scheduled": {
-                    "departure": f"{date_str}T07:25:00+00:00",
-                    "arrival": f"{date_str}T08:26:00+00:00",
-                }
-            },
-            "legs": [{}],
-            "fares": [
-                {
-                    "typeDescription": "Advance Single",
-                    "railcardFares": [
-                        {"code": config.RAILCARD_CODE, "prices": {"adult": 870, "child": 0}}
-                    ],
-                }
-            ],
-        }
-    )
+    raw = _raw(_journey(speculative_date, "07:25", "08:26", Decimal("8.70")))
     fetch_calls = _install_fake_scraper(monkeypatch, {speculative_date: raw})
     send_calls = _install_fake_notifier(monkeypatch)
 

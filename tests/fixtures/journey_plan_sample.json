@@ -1,0 +1,1521 @@
+{
+  "links": {
+    "/data/railcards/YNG": {
+      "code": "YNG",
+      "maxAdults": 1,
+      "maxChildren": 0,
+      "minAdults": 1,
+      "minChildren": 0,
+      "name": "16-25 Railcard"
+    },
+    "/data/routes/00000": {
+      "code": "00000",
+      "description": "Travel is allowed via any permitted route.",
+      "name": "ANY PERMITTED"
+    },
+    "/data/routes/00820": {
+      "code": "00820",
+      "description": "Only valid on Great Western Railway services and required connecting Great Western Railway services.",
+      "name": "GWR ONLY (00820)"
+    },
+    "/data/stations/0035": {
+      "categories": [
+        "NationalRail",
+        "LondonUnderground",
+        "LondonOverground",
+        "TflRail",
+        "DLR",
+        "LondonTramlink"
+      ],
+      "crs": "",
+      "gazetteer": {
+        "isClosed": false,
+        "isOpen": false,
+        "isOpeningSoon": false,
+        "isZonalOrGroup": true,
+        "londonZones": [
+          "1",
+          "2",
+          "3",
+          "4",
+          "5",
+          "6"
+        ],
+        "smartcardsAvailable": true,
+        "withinGoldcardArea": true
+      },
+      "isGroupStation": false,
+      "name": "London Travelcard Zones 1-6",
+      "nlc": "0035",
+      "oysterData": {},
+      "smartcardData": {},
+      "stationType": "group",
+      "ticketData": {},
+      "weeklyCapAvailable": true
+    },
+    "/data/stations/1072": {
+      "categories": [
+        "NationalRail",
+        "LondonUnderground"
+      ],
+      "crs": "",
+      "gazetteer": {
+        "isClosed": false,
+        "isOpen": true,
+        "isOpeningSoon": false,
+        "isZonalOrGroup": false,
+        "londonZones": [
+          "1"
+        ],
+        "smartcardsAvailable": true,
+        "withinGoldcardArea": true
+      },
+      "isGroupStation": true,
+      "latitude": 51.510107,
+      "longitude": -0.134674,
+      "name": "London Terminals",
+      "nlc": "1072",
+      "oysterData": {},
+      "smartcardData": {},
+      "stationType": "group",
+      "ticketData": {},
+      "tlGroupCode": "182",
+      "weeklyCapAvailable": true
+    },
+    "/data/stations/2968": {
+      "accessibilityData": {
+        "stepFreeAccessCoverage": "wholeStation",
+        "stepFreeAccessNote": "<p><strong>Visually Impaired</strong></p><p>All platforms have tactile warning strips.</p>"
+      },
+      "address": "Manchester Piccadilly station\nPiccadilly Station Approach\nManchester\nGreater Manchester\nM60 7RA",
+      "categories": [
+        "NationalRail",
+        "ManchesterMetrolink"
+      ],
+      "crs": "MAN",
+      "facilities": [
+        "SeatedArea",
+        "WaitingRoom",
+        "Trolleys",
+        "StationBuffet",
+        "Toilets",
+        "BabyChange",
+        "WiFi",
+        "PostBox",
+        "AtmMachine",
+        "Shops"
+      ],
+      "gazetteer": {
+        "isClosed": false,
+        "isOpen": true,
+        "isOpeningSoon": false,
+        "isZonalOrGroup": false,
+        "smartcardsAvailable": false,
+        "withinGoldcardArea": false
+      },
+      "isGroupStation": false,
+      "latitude": 53.47671998,
+      "longitude": -2.228977818,
+      "name": "Manchester Piccadilly",
+      "nlc": "2968",
+      "operator": "NR",
+      "oysterData": {
+        "oysterPrePay": false,
+        "oysterTopup": false,
+        "oysterValidator": false
+      },
+      "plusbusNlc": "J819",
+      "smartcardData": {
+        "smartcardIssued": false,
+        "smartcardTopup": false,
+        "smartcardValidator": false
+      },
+      "stationType": "regular",
+      "ticketData": {
+        "prepurchaseCollection": true,
+        "ticketMachine": true,
+        "ticketOfficeNote": "<p>Main Concourse</p>"
+      },
+      "weeklyCapAvailable": false
+    },
+    "/data/stations/3087": {
+      "accessibilityData": {
+        "stepFreeAccessCoverage": "wholeStation"
+      },
+      "address": "London Paddington station\nPraed Street\nLondon\nGreater London\nW2 1HQ",
+      "categories": [
+        "NationalRail",
+        "LondonUnderground"
+      ],
+      "crs": "PAD",
+      "facilities": [
+        "SeatedArea",
+        "Trolleys",
+        "StationBuffet",
+        "Toilets",
+        "BabyChange",
+        "Showers",
+        "WiFi",
+        "AtmMachine",
+        "Shops"
+      ],
+      "gazetteer": {
+        "isClosed": false,
+        "isOpen": true,
+        "isOpeningSoon": false,
+        "isZonalOrGroup": false,
+        "londonZones": [
+          "1"
+        ],
+        "smartcardsAvailable": false,
+        "withinGoldcardArea": true
+      },
+      "isGroupStation": false,
+      "latitude": 51.51645141,
+      "longitude": -0.176844743,
+      "name": "London Paddington",
+      "nlc": "3087",
+      "nreAlert": "<p>The escalator going up to the main concourse is currently out of service at London Paddington Station.</p><p>The Northern entrance lift is currently out of order at London Paddington station.</p><p><strong>The ticket office will have the following changes due to planned availability: </strong></p><p>Sunday 9 August - 0740-2100 Monday 10 August - 0610-2100 Tuesday 11 August - 0610-2100 Wednesday 12 August - 0610-2100 Thursday 13 August - 0610-2100 Friday 14 August - 0610-2100 Saturday 15 August - 0610-2100 </p><p></p><p><em>Tickets can be bought from the ticket machine or digitally.</em></p>",
+      "operator": "NR",
+      "oysterData": {
+        "oysterPrePay": false,
+        "oysterTopup": false,
+        "oysterValidator": true
+      },
+      "smartcardData": {
+        "smartcardIssued": false,
+        "smartcardTopup": false,
+        "smartcardValidator": false
+      },
+      "stationType": "regular",
+      "ticketData": {
+        "prepurchaseCollection": true,
+        "ticketMachine": true
+      },
+      "weeklyCapAvailable": true
+    },
+    "/data/stations/3115": {
+      "accessibilityData": {
+        "stepFreeAccessCoverage": "wholeStation",
+        "stepFreeAccessNote": "<p>Step Free Category A Station - This station has step free access to all platforms via lifts and an overbridge to access platform 4. </p>"
+      },
+      "address": "Oxford station\nPark End Street\nOxford\nOxfordshire\nOX1 1HS",
+      "categories": [
+        "NationalRail"
+      ],
+      "crs": "OXF",
+      "facilities": [
+        "SeatedArea",
+        "StationBuffet",
+        "Toilets",
+        "BabyChange",
+        "WiFi",
+        "PostBox",
+        "TouristInformation",
+        "AtmMachine",
+        "Shops"
+      ],
+      "gazetteer": {
+        "isClosed": false,
+        "isOpen": true,
+        "isOpeningSoon": false,
+        "isZonalOrGroup": false,
+        "smartcardsAvailable": false,
+        "withinGoldcardArea": true
+      },
+      "isGroupStation": false,
+      "latitude": 51.75350075,
+      "longitude": -1.270151173,
+      "name": "Oxford",
+      "nlc": "3115",
+      "nreAlert": "<p>The ticket office will have the following changes to planned availability: Friday 7th August - 07:30-18:30 Sunday 9th August - 09:00-16:00 Thursday 13th August - 05:45-18:00 Friday 14th August - 07:30-18:30 </p><p>Tickets can be bought from the ticket machine or digitally.</p><p></p>",
+      "operator": "GW",
+      "oysterData": {
+        "oysterPrePay": false,
+        "oysterTopup": false,
+        "oysterValidator": false
+      },
+      "plusbusNlc": "J931",
+      "smartcardData": {
+        "smartcardIssued": true,
+        "smartcardTopup": false,
+        "smartcardValidator": true
+      },
+      "stationType": "regular",
+      "ticketData": {
+        "prepurchaseCollection": true,
+        "ticketMachine": true,
+        "ticketOfficeNote": "<p>In ticket hall</p>"
+      },
+      "weeklyCapAvailable": false
+    },
+    "/data/stations/3149": {
+      "accessibilityData": {
+        "stepFreeAccessCoverage": "wholeStation",
+        "stepFreeAccessNote": "<p>platforms can be reached via lift and bridge, ticket office is step free.</p>"
+      },
+      "address": "Reading station\nStation Hill\nReading\nBerkshire\nRG1 1LZ",
+      "categories": [
+        "NationalRail"
+      ],
+      "crs": "RDG",
+      "facilities": [
+        "SeatedArea",
+        "Trolleys",
+        "StationBuffet",
+        "Toilets",
+        "BabyChange",
+        "WiFi",
+        "PostBox",
+        "AtmMachine",
+        "Shops"
+      ],
+      "gazetteer": {
+        "isClosed": false,
+        "isOpen": true,
+        "isOpeningSoon": false,
+        "isZonalOrGroup": false,
+        "smartcardsAvailable": false,
+        "withinGoldcardArea": true
+      },
+      "isGroupStation": false,
+      "latitude": 51.45878189,
+      "longitude": -0.971854374,
+      "name": "Reading",
+      "nlc": "3149",
+      "operator": "NR",
+      "oysterData": {
+        "oysterPrePay": false,
+        "oysterTopup": false,
+        "oysterValidator": false
+      },
+      "plusbusNlc": "J823",
+      "smartcardData": {
+        "smartcardIssued": true,
+        "smartcardTopup": true,
+        "smartcardValidator": true
+      },
+      "stationType": "regular",
+      "ticketData": {
+        "prepurchaseCollection": true,
+        "ticketMachine": true,
+        "ticketOfficeNote": "<p>The main ticket office is situated in the Brunel Arcade.</p>"
+      },
+      "weeklyCapAvailable": true
+    },
+    "/data/stations/3607": {
+      "accessibilityData": {
+        "stepFreeAccessCoverage": "wholeStation",
+        "stepFreeAccessNote": "<p>Category A</p><p>Step free access through the ticket hall to Platform 3 and 4.</p><p>A footbridge lifts connects Platforms 1 and 2.</p>"
+      },
+      "address": "Hereford Station\nStation Approach\nHereford\nHerefordshire\nHR1 1BB",
+      "categories": [
+        "NationalRail"
+      ],
+      "crs": "HFD",
+      "facilities": [
+        "SeatedArea",
+        "StationBuffet",
+        "Toilets",
+        "BabyChange"
+      ],
+      "gazetteer": {
+        "isClosed": false,
+        "isOpen": true,
+        "isOpeningSoon": false,
+        "isZonalOrGroup": false,
+        "smartcardsAvailable": false,
+        "withinGoldcardArea": false
+      },
+      "isGroupStation": false,
+      "latitude": 52.06116993,
+      "longitude": -2.708217764,
+      "name": "Hereford",
+      "nlc": "3607",
+      "nreAlert": "<p>The lifts are out of order between platform 1 and 2 at Hereford station. </p>",
+      "operator": "AW",
+      "oysterData": {
+        "oysterPrePay": false,
+        "oysterTopup": false,
+        "oysterValidator": false
+      },
+      "plusbusNlc": "J983",
+      "smartcardData": {
+        "smartcardIssued": false,
+        "smartcardTopup": true,
+        "smartcardValidator": false
+      },
+      "stationType": "regular",
+      "ticketData": {
+        "prepurchaseCollection": true,
+        "ticketMachine": true,
+        "ticketOfficeNote": "<p>The ticket office is inside the station building.</p>"
+      },
+      "weeklyCapAvailable": false
+    },
+    "/data/stations/4731": {
+      "accessibilityData": {
+        "stepFreeAccessCoverage": "partialStation",
+        "stepFreeAccessNote": "<p>Step free Category B2 station - step free access available to both platforms via steep ramps to each platform.</p>"
+      },
+      "address": "Cheltenham Spa station\nQueens Road\nCheltenham\nGloucestershire\nGL51 8NP",
+      "categories": [
+        "NationalRail"
+      ],
+      "crs": "CNM",
+      "facilities": [
+        "SeatedArea",
+        "Trolleys",
+        "StationBuffet",
+        "Toilets",
+        "BabyChange",
+        "WiFi"
+      ],
+      "gazetteer": {
+        "isClosed": false,
+        "isOpen": true,
+        "isOpeningSoon": false,
+        "isZonalOrGroup": false,
+        "smartcardsAvailable": false,
+        "withinGoldcardArea": false
+      },
+      "isGroupStation": false,
+      "latitude": 51.897399,
+      "longitude": -2.099625825,
+      "name": "Cheltenham Spa",
+      "nlc": "4731",
+      "nreAlert": "<p>The ticket office will have the following changes to planned availability:</p><p>Sunday 9th August - Closed</p><p>Tickets can be bought from the ticket machine or digitally.</p>",
+      "operator": "GW",
+      "oysterData": {
+        "oysterPrePay": false,
+        "oysterTopup": false,
+        "oysterValidator": false
+      },
+      "plusbusNlc": "H939",
+      "smartcardData": {
+        "smartcardIssued": true,
+        "smartcardTopup": false,
+        "smartcardValidator": false
+      },
+      "stationType": "regular",
+      "ticketData": {
+        "prepurchaseCollection": true,
+        "ticketMachine": true,
+        "ticketOfficeNote": "<p>In ticket hall and on Bristol bound platform</p>"
+      },
+      "weeklyCapAvailable": false
+    },
+    "/data/stations/4891": {
+      "accessibilityData": {
+        "stepFreeAccessCoverage": "partialStation",
+        "stepFreeAccessNote": "<p>This station has been classified as a step-free access category<strong> B3</strong> station. <strong>This means that there is some step-free access, this may be in one direction only.</strong> More information on the step-free classification system can be found at <a href=\"https://www.orr.gov.uk/media/10955\" title=\"\"><u>https://www.orr.gov.uk/media/10955</u></a>\u00a0 </p><p><strong>Please note: Platform 1 is the only platform with step free access at Worcester Shrub Hill. Platform 2 and 3 can only be accessed as step free with station staff assistance. </strong></p><p>The assistance meeting point is at the ticket office during available opening times. When station staff aren't available, the assistance meeting point is on the platform that your train is due to depart. When the train has arrived, please attract the attention of a staff member onboard, who will help you to board the train.\u00a0 </p>"
+      },
+      "address": "Worcester Shrub Hill station\nShrub Hill, off Shrub Hill Road\nWorcester\nWorcestershire\nWR4 9EJ",
+      "categories": [
+        "NationalRail"
+      ],
+      "crs": "WOS",
+      "facilities": [
+        "SeatedArea",
+        "Trolleys",
+        "StationBuffet",
+        "Toilets"
+      ],
+      "gazetteer": {
+        "isClosed": false,
+        "isOpen": true,
+        "isOpeningSoon": false,
+        "isZonalOrGroup": false,
+        "smartcardsAvailable": false,
+        "withinGoldcardArea": true
+      },
+      "isGroupStation": false,
+      "latitude": 52.19473652,
+      "longitude": -2.209415022,
+      "name": "Worcester Shrub Hill",
+      "nlc": "4891",
+      "operator": "WM",
+      "oysterData": {
+        "oysterPrePay": false,
+        "oysterTopup": false,
+        "oysterValidator": false
+      },
+      "plusbusNlc": "J987",
+      "smartcardData": {
+        "smartcardIssued": false,
+        "smartcardTopup": false,
+        "smartcardValidator": false
+      },
+      "stationType": "regular",
+      "ticketData": {
+        "prepurchaseCollection": true,
+        "ticketMachine": true,
+        "ticketOfficeNote": "<p>A Ticket Vending Machine is located in the Booking Hall.</p>"
+      },
+      "weeklyCapAvailable": false
+    },
+    "/data/stations/4892": {
+      "accessibilityData": {
+        "stepFreeAccessCoverage": "partialStation",
+        "stepFreeAccessNote": "<p>This station has been classified as a step-free access category <strong>B1</strong> station. <strong>This means that there is step-free access to all platforms, but that this may include long or steep ramps. Access between platforms may be via the street.</strong> More information on the step-free classification system can be found at <a href=\"https://www.orr.gov.uk/media/10955\" title=\"\"><u>https://www.orr.gov.uk/media/10955</u></a>\u00a0 </p><p>The assistance meeting point is at the ticket office during available opening times. When station staff aren't available, the assistance meeting point is on the platform that your train is due to depart. When the train has arrived, please attract the attention of a staff member onboard, who will help you to board the train.\u00a0\u00a0\u00a0 </p>"
+      },
+      "address": "Great Malvern station\nStation Approach\nMalvern\nWorcestershire\nWR14 3AU",
+      "categories": [
+        "NationalRail"
+      ],
+      "crs": "GMV",
+      "facilities": [
+        "SeatedArea",
+        "WaitingRoom",
+        "Toilets"
+      ],
+      "gazetteer": {
+        "isClosed": false,
+        "isOpen": true,
+        "isOpeningSoon": false,
+        "isZonalOrGroup": false,
+        "smartcardsAvailable": false,
+        "withinGoldcardArea": false
+      },
+      "isGroupStation": false,
+      "latitude": 52.10920685,
+      "longitude": -2.318281662,
+      "name": "Great Malvern",
+      "nlc": "4892",
+      "operator": "WM",
+      "oysterData": {
+        "oysterPrePay": false,
+        "oysterTopup": false,
+        "oysterValidator": false
+      },
+      "plusbusNlc": "J982",
+      "smartcardData": {
+        "smartcardIssued": false,
+        "smartcardTopup": false,
+        "smartcardValidator": false
+      },
+      "stationType": "regular",
+      "ticketData": {
+        "prepurchaseCollection": true,
+        "ticketMachine": true,
+        "ticketOfficeNote": "<p>On platform towards Worcester</p>"
+      },
+      "weeklyCapAvailable": false
+    },
+    "/data/stations/5876": {
+      "accessibilityData": {
+        "stepFreeAccessCoverage": "partialStation",
+        "stepFreeAccessNote": "<p>Step-free category B2 station.\u00a0Level access to both sides of station from separate entrances. Long and steep ramped subway between platforms - up to 1:8 gradient.</p>"
+      },
+      "address": "Bournemouth station\nHoldenhurst Road\nBournemouth\nDorset\nBH8 8HX",
+      "categories": [
+        "NationalRail"
+      ],
+      "crs": "BMH",
+      "facilities": [
+        "SeatedArea",
+        "Trolleys",
+        "StationBuffet",
+        "Toilets",
+        "WiFi"
+      ],
+      "gazetteer": {
+        "isClosed": false,
+        "isOpen": true,
+        "isOpeningSoon": false,
+        "isZonalOrGroup": false,
+        "smartcardsAvailable": false,
+        "withinGoldcardArea": true
+      },
+      "isGroupStation": false,
+      "latitude": 50.72752854,
+      "longitude": -1.863941342,
+      "name": "Bournemouth",
+      "nlc": "5876",
+      "operator": "SW",
+      "oysterData": {
+        "oysterPrePay": false,
+        "oysterTopup": false,
+        "oysterValidator": false
+      },
+      "plusbusNlc": "H129",
+      "smartcardData": {
+        "smartcardIssued": true,
+        "smartcardTopup": true,
+        "smartcardValidator": true
+      },
+      "stationType": "regular",
+      "ticketData": {
+        "prepurchaseCollection": true,
+        "ticketMachine": true,
+        "ticketOfficeNote": "<p>The main ticket office is located on Platform 2 with an additional ticket office open 0735 - 1610, Monday to Friday on platform 3.</p><p>Ticket Vending Machines are located outside both station entrances and in booking hall.</p>"
+      },
+      "weeklyCapAvailable": false
+    },
+    "/data/ticket-types/ADT": {
+      "code": "ADT",
+      "isAdvance": false,
+      "isCarnet": false,
+      "isFirstClass": false,
+      "isFlexi": false,
+      "isPackage": false,
+      "isReturn": true,
+      "isSeason": false,
+      "name": "Anytime Day Travelcard",
+      "validityCode": "81"
+    },
+    "/data/ticket-types/FDS": {
+      "code": "FDS",
+      "isAdvance": false,
+      "isCarnet": false,
+      "isFirstClass": true,
+      "isFlexi": false,
+      "isPackage": false,
+      "isReturn": false,
+      "isSeason": false,
+      "name": "Anytime Day Single (1st Class)",
+      "validityCode": "87"
+    },
+    "/data/ticket-types/FDT": {
+      "code": "FDT",
+      "isAdvance": false,
+      "isCarnet": false,
+      "isFirstClass": true,
+      "isFlexi": false,
+      "isPackage": false,
+      "isReturn": true,
+      "isSeason": false,
+      "name": "Anytime Day Travelcard (1st Class)",
+      "validityCode": "81"
+    },
+    "/data/ticket-types/SDS": {
+      "code": "SDS",
+      "isAdvance": false,
+      "isCarnet": false,
+      "isFirstClass": false,
+      "isFlexi": false,
+      "isPackage": false,
+      "isReturn": false,
+      "isSeason": false,
+      "name": "Anytime Day Single",
+      "validityCode": "87"
+    },
+    "/data/ticket-types/W1L": {
+      "code": "W1L",
+      "isAdvance": true,
+      "isCarnet": false,
+      "isFirstClass": true,
+      "isFlexi": false,
+      "isPackage": false,
+      "isReturn": false,
+      "isSeason": false,
+      "name": "Advance Single (1st Class)",
+      "validityCode": "64"
+    },
+    "/data/ticket-types/W2M": {
+      "code": "W2M",
+      "isAdvance": true,
+      "isCarnet": false,
+      "isFirstClass": false,
+      "isFlexi": false,
+      "isPackage": false,
+      "isReturn": false,
+      "isSeason": false,
+      "name": "Advance Single",
+      "validityCode": "64"
+    },
+    "/data/tocs/GW": {
+      "code": "GW",
+      "name": "Great Western Railway"
+    },
+    "/data/tocs/XC": {
+      "code": "XC",
+      "name": "CrossCountry"
+    },
+    "/jp/fares/3115%3A0035%3AADT%3A00000%3A%3A0%3A20261218%3A20261218%3A0001%3A20261218%3A20261218%3A0001%3A%3A%3A%3AADT%3A%3A%3A%3A7035%2C1%2C0%2C003%2CYNG%2C%2C3535%2C10570%2C%3AGW%7CyJBqISJXDPn0a9k1pR%2BzRAGc2Co%3D": {
+      "canSelectSeatOnJourney": {
+        "/jp/journeys/352%3A352%3AOXF_PAD_W76844": true,
+        "/jp/journeys/352%3A352%3AOXF_PAD_W77394": true,
+        "/jp/journeys/352%3A352%3AOXF_PAD_W77396": true,
+        "/jp/journeys/352%3A352%3APAD_OXF_W76850": true,
+        "/jp/journeys/352%3A352%3APAD_OXF_W77588": true,
+        "/jp/journeys/352%3A352%3APAD_RDG_W77053%2C352%3ARDG_OXF_W01345": false
+      },
+      "canSelectSeatOnLeg": {
+        "/jp/leg/352%3AOXF_PAD_W76844": true,
+        "/jp/leg/352%3AOXF_PAD_W77394": true,
+        "/jp/leg/352%3AOXF_PAD_W77396": true,
+        "/jp/leg/352%3APAD_OXF_W76850": true,
+        "/jp/leg/352%3APAD_OXF_W77588": true,
+        "/jp/leg/352%3APAD_RDG_W77053": false,
+        "/jp/leg/352%3ARDG_OXF_W01345": false
+      },
+      "category": "Anytime",
+      "crossLondon": false,
+      "destination": "/data/stations/0035",
+      "fareOptionId": "/odyssey/fare-option/352:/fare/3115-0035-00000-ADT-003-1----244-1-0--7035-1-0-16f8",
+      "isPrimaryForDiscount": true,
+      "origin": "/data/stations/3115",
+      "originalTotalPrice": 10570,
+      "outwardValidity": {
+        "break": true,
+        "from": "2026-12-18",
+        "period": {
+          "days": 1
+        },
+        "until": "2026-12-18"
+      },
+      "returnValidity": {
+        "break": true,
+        "from": "2026-12-18",
+        "period": {
+          "days": 1
+        },
+        "until": "2026-12-18"
+      },
+      "route": "/data/routes/00000",
+      "setter": "/data/tocs/GW",
+      "smartTicketType": "/data/ticket-types/ADT",
+      "ticketType": "/data/ticket-types/ADT",
+      "tickets": [
+        {
+          "adults": 1,
+          "children": 0,
+          "isFirstClass": false,
+          "originalPrice": 10570,
+          "price": 7035,
+          "railcard": "/data/railcards/YNG",
+          "railcardDiscount": 3535,
+          "statusCode": "003"
+        }
+      ],
+      "totalPrice": 7035
+    },
+    "/jp/fares/3115%3A0035%3AFDT%3A00000%3A%3A0%3A20261218%3A20261218%3A0001%3A20261218%3A20261218%3A0001%3A%3A%3A%3AFDT%3A%3A%3A%3A18290%2C1%2C0%2C000%2C%2C%2C%2C18290%2C%3AGW%7CAY89wBRuX4sBglASr3u4%2BW9APC4%3D": {
+      "canSelectSeatOnJourney": {
+        "/jp/journeys/352%3A352%3AOXF_PAD_W76844": true,
+        "/jp/journeys/352%3A352%3AOXF_PAD_W77394": true,
+        "/jp/journeys/352%3A352%3AOXF_PAD_W77396": true,
+        "/jp/journeys/352%3A352%3APAD_OXF_W76850": true,
+        "/jp/journeys/352%3A352%3APAD_OXF_W77588": true,
+        "/jp/journeys/352%3A352%3APAD_RDG_W77053%2C352%3ARDG_OXF_W01345": true
+      },
+      "canSelectSeatOnLeg": {
+        "/jp/leg/352%3AOXF_PAD_W76844": true,
+        "/jp/leg/352%3AOXF_PAD_W77394": true,
+        "/jp/leg/352%3AOXF_PAD_W77396": true,
+        "/jp/leg/352%3APAD_OXF_W76850": true,
+        "/jp/leg/352%3APAD_OXF_W77588": true,
+        "/jp/leg/352%3APAD_RDG_W77053": true,
+        "/jp/leg/352%3ARDG_OXF_W01345": true
+      },
+      "category": "Anytime",
+      "crossLondon": false,
+      "destination": "/data/stations/0035",
+      "fareOptionId": "/odyssey/fare-option/352:/fare/3115-0035-00000-FDT-000-1----244-1-0--18290-1-0-16f8",
+      "isPrimaryForDiscount": true,
+      "origin": "/data/stations/3115",
+      "originalTotalPrice": 18290,
+      "outwardValidity": {
+        "break": true,
+        "from": "2026-12-18",
+        "period": {
+          "days": 1
+        },
+        "until": "2026-12-18"
+      },
+      "returnValidity": {
+        "break": true,
+        "from": "2026-12-18",
+        "period": {
+          "days": 1
+        },
+        "until": "2026-12-18"
+      },
+      "route": "/data/routes/00000",
+      "setter": "/data/tocs/GW",
+      "smartTicketType": "/data/ticket-types/FDT",
+      "ticketType": "/data/ticket-types/FDT",
+      "tickets": [
+        {
+          "adults": 1,
+          "children": 0,
+          "isFirstClass": true,
+          "originalPrice": 18290,
+          "price": 18290,
+          "statusCode": "000"
+        }
+      ],
+      "totalPrice": 18290
+    },
+    "/jp/fares/3115%3A1072%3AFDS%3A00000%3A%3A0%3A20261218%3A20261218%3A0001%3A%3A%3A%3A%3A%3A%3AFDS%3A%3A%3A%3A8630%2C1%2C0%2C000%2C%2C%2C%2C8630%2C%3AGW%7C2Z3L4gJAKPSk3Kik4PR32dcmraQ%3D": {
+      "canSelectSeatOnJourney": {
+        "/jp/journeys/352%3A352%3AOXF_PAD_W76844": true,
+        "/jp/journeys/352%3A352%3AOXF_PAD_W77394": true,
+        "/jp/journeys/352%3A352%3AOXF_PAD_W77396": true
+      },
+      "canSelectSeatOnLeg": {
+        "/jp/leg/352%3AOXF_PAD_W76844": true,
+        "/jp/leg/352%3AOXF_PAD_W77394": true,
+        "/jp/leg/352%3AOXF_PAD_W77396": true
+      },
+      "category": "Anytime",
+      "crossLondon": false,
+      "destination": "/data/stations/1072",
+      "fareOptionId": "/odyssey/fare-option/352:/fare/3115-1072-00000-FDS-000-1----244-1-0--8630-1-0-16f8",
+      "isPrimaryForDiscount": true,
+      "origin": "/data/stations/3115",
+      "originalTotalPrice": 8630,
+      "outwardValidity": {
+        "break": true,
+        "from": "2026-12-18",
+        "period": {
+          "days": 1
+        },
+        "until": "2026-12-18"
+      },
+      "route": "/data/routes/00000",
+      "setter": "/data/tocs/GW",
+      "smartTicketType": "/data/ticket-types/FDS",
+      "ticketType": "/data/ticket-types/FDS",
+      "tickets": [
+        {
+          "adults": 1,
+          "children": 0,
+          "isFirstClass": true,
+          "originalPrice": 8630,
+          "price": 8630,
+          "statusCode": "000"
+        }
+      ],
+      "totalPrice": 8630
+    },
+    "/jp/fares/3115%3A1072%3ASDS%3A00000%3A%3A0%3A20261218%3A20261218%3A0001%3A%3A%3A%3A%3A%3A%3ASDS%3A%3A%3A%3A3140%2C1%2C0%2C003%2CYNG%2C%2C1580%2C4720%2C%3AGW%7CH7m%2Buo%2FCyIu%2FFAytpjrtdqVjVuA%3D": {
+      "canSelectSeatOnJourney": {
+        "/jp/journeys/352%3A352%3AOXF_PAD_W76844": true,
+        "/jp/journeys/352%3A352%3AOXF_PAD_W77394": true,
+        "/jp/journeys/352%3A352%3AOXF_PAD_W77396": true
+      },
+      "canSelectSeatOnLeg": {
+        "/jp/leg/352%3AOXF_PAD_W76844": true,
+        "/jp/leg/352%3AOXF_PAD_W77394": true,
+        "/jp/leg/352%3AOXF_PAD_W77396": true
+      },
+      "category": "Anytime",
+      "crossLondon": false,
+      "destination": "/data/stations/1072",
+      "fareOptionId": "/odyssey/fare-option/352:/fare/3115-1072-00000-SDS-003-1----244-1-0--3140-1-0-16f8",
+      "isPrimaryForDiscount": true,
+      "origin": "/data/stations/3115",
+      "originalTotalPrice": 4720,
+      "outwardValidity": {
+        "break": true,
+        "from": "2026-12-18",
+        "period": {
+          "days": 1
+        },
+        "until": "2026-12-18"
+      },
+      "route": "/data/routes/00000",
+      "setter": "/data/tocs/GW",
+      "smartTicketType": "/data/ticket-types/SDS",
+      "ticketType": "/data/ticket-types/SDS",
+      "tickets": [
+        {
+          "adults": 1,
+          "children": 0,
+          "isFirstClass": false,
+          "originalPrice": 4720,
+          "price": 3140,
+          "railcard": "/data/railcards/YNG",
+          "railcardDiscount": 1580,
+          "statusCode": "003"
+        }
+      ],
+      "totalPrice": 3140
+    },
+    "/jp/fares/3115%3A1072%3AW1L%3A00820%3AQS%3A0%3A20261218%3A20261218%3A0001%3A%3A%3A%3A%3A%3A%3A%3A9%3A%3A%3A2230%2C1%2C0%2C003%2CYNG%2C%2C1120%2C3350%2C%3AGW%7CPSJUOXZiR80%2FVoBBrEYO%2BPYpt24%3D": {
+      "canSelectSeatOnJourney": {
+        "/jp/journeys/352%3A352%3AOXF_PAD_W76844": true,
+        "/jp/journeys/352%3A352%3AOXF_PAD_W77394": true,
+        "/jp/journeys/352%3A352%3AOXF_PAD_W77396": true
+      },
+      "canSelectSeatOnLeg": {
+        "/jp/leg/352%3AOXF_PAD_W76844": true,
+        "/jp/leg/352%3AOXF_PAD_W77394": true,
+        "/jp/leg/352%3AOXF_PAD_W77396": true
+      },
+      "category": "Advance",
+      "crossLondon": false,
+      "destination": "/data/stations/1072",
+      "fareOptionId": "/odyssey/fare-option/352:/fare/3115-1072-00820-W1L-003-1-QS---244-1-0--2230-1-0-16f8",
+      "isPrimaryForDiscount": true,
+      "origin": "/data/stations/3115",
+      "originalTotalPrice": 3350,
+      "outwardValidity": {
+        "break": false,
+        "from": "2026-12-18",
+        "period": {
+          "days": 1
+        },
+        "until": "2026-12-18"
+      },
+      "restriction": "QS",
+      "route": "/data/routes/00820",
+      "seatAvailability": 9,
+      "setter": "/data/tocs/GW",
+      "ticketType": "/data/ticket-types/W1L",
+      "tickets": [
+        {
+          "adults": 1,
+          "children": 0,
+          "isFirstClass": true,
+          "originalPrice": 3350,
+          "price": 2230,
+          "railcard": "/data/railcards/YNG",
+          "railcardDiscount": 1120,
+          "statusCode": "003"
+        }
+      ],
+      "totalPrice": 2230
+    },
+    "/jp/fares/3115%3A1072%3AW2M%3A00820%3AQS%3A0%3A20261218%3A20261218%3A0001%3A%3A%3A%3A%3A%3A%3A%3A9%3A%3A%3A930%2C1%2C0%2C003%2CYNG%2C%2C470%2C1400%2C%3AGW%7CB49I4iGf%2BxNmOHT4xDmvfdalOjc%3D": {
+      "canSelectSeatOnJourney": {
+        "/jp/journeys/352%3A352%3AOXF_PAD_W76844": true,
+        "/jp/journeys/352%3A352%3AOXF_PAD_W77394": true,
+        "/jp/journeys/352%3A352%3AOXF_PAD_W77396": true
+      },
+      "canSelectSeatOnLeg": {
+        "/jp/leg/352%3AOXF_PAD_W76844": true,
+        "/jp/leg/352%3AOXF_PAD_W77394": true,
+        "/jp/leg/352%3AOXF_PAD_W77396": true
+      },
+      "category": "Advance",
+      "crossLondon": false,
+      "destination": "/data/stations/1072",
+      "fareOptionId": "/odyssey/fare-option/352:/fare/3115-1072-00820-W2M-003-1-QS---244-1-0--930-1-0-16f8",
+      "isPrimaryForDiscount": true,
+      "origin": "/data/stations/3115",
+      "originalTotalPrice": 1400,
+      "outwardValidity": {
+        "break": false,
+        "from": "2026-12-18",
+        "period": {
+          "days": 1
+        },
+        "until": "2026-12-18"
+      },
+      "restriction": "QS",
+      "route": "/data/routes/00820",
+      "seatAvailability": 9,
+      "setter": "/data/tocs/GW",
+      "ticketType": "/data/ticket-types/W2M",
+      "tickets": [
+        {
+          "adults": 1,
+          "children": 0,
+          "isFirstClass": false,
+          "originalPrice": 1400,
+          "price": 930,
+          "railcard": "/data/railcards/YNG",
+          "railcardDiscount": 470,
+          "statusCode": "003"
+        }
+      ],
+      "totalPrice": 930
+    },
+    "/jp/journeys/352%3A352%3AOXF_PAD_W76844": {
+      "callingPoints": "/jp/journeys/352%3A352%3AOXF_PAD_W76844/calling-points",
+      "changes": 0,
+      "destination": {
+        "station": "/data/stations/3087",
+        "time": {
+          "adjustedTime": "2026-12-18T08:27:00",
+          "confidence": "Estimate",
+          "delayed": false,
+          "scheduledTime": "2026-12-18T08:27:00"
+        }
+      },
+      "isCancelled": false,
+      "isLegal": true,
+      "isOvertaken": true,
+      "legs": [
+        {
+          "destination": [
+            {
+              "cancelled": false,
+              "platform": "8",
+              "station": "/data/stations/3087",
+              "time": {
+                "adjustedTime": "2026-12-18T08:27:00",
+                "confidence": "Estimate",
+                "delayed": false,
+                "scheduledTime": "2026-12-18T08:27:00"
+              }
+            }
+          ],
+          "fixed": false,
+          "id": "3115;3087;2026-12-18;",
+          "legId": "/jp/leg/352%3AOXF_PAD_W76844",
+          "origin": [
+            {
+              "cancelled": false,
+              "platform": "3",
+              "station": "/data/stations/3115",
+              "time": {
+                "adjustedTime": "2026-12-18T07:25:00",
+                "confidence": "Estimate",
+                "delayed": false,
+                "scheduledTime": "2026-12-18T07:25:00"
+              }
+            }
+          ],
+          "serviceDetails": {
+            "facilities": {
+              "buffet": false,
+              "firstClass": true,
+              "firstClassMeal": false,
+              "firstClassRestaurant": false,
+              "hotFood": false,
+              "restaurant": false,
+              "trolley": false,
+              "wheelchair": false
+            },
+            "isCountedPlace": false,
+            "isTemporaryTrain": false,
+            "mode": "Train",
+            "reservable": "Possible",
+            "retailServiceId": "GW740600",
+            "toc": "/data/tocs/GW",
+            "trainDestination": "/data/stations/3087",
+            "trainOrigin": "/data/stations/3115",
+            "trainUid": "W76844"
+          }
+        }
+      ],
+      "origin": {
+        "station": "/data/stations/3115",
+        "time": {
+          "adjustedTime": "2026-12-18T07:25:00",
+          "confidence": "Estimate",
+          "delayed": false,
+          "scheduledTime": "2026-12-18T07:25:00"
+        }
+      },
+      "status": "successful"
+    },
+    "/jp/journeys/352%3A352%3AOXF_PAD_W77394": {
+      "callingPoints": "/jp/journeys/352%3A352%3AOXF_PAD_W77394/calling-points",
+      "changes": 0,
+      "destination": {
+        "station": "/data/stations/3087",
+        "time": {
+          "adjustedTime": "2026-12-18T08:25:00",
+          "confidence": "Estimate",
+          "delayed": false,
+          "scheduledTime": "2026-12-18T08:25:00"
+        }
+      },
+      "isCancelled": false,
+      "isLegal": true,
+      "isOvertaken": false,
+      "legs": [
+        {
+          "destination": [
+            {
+              "cancelled": false,
+              "platform": "10",
+              "station": "/data/stations/3087",
+              "time": {
+                "adjustedTime": "2026-12-18T08:25:00",
+                "confidence": "Estimate",
+                "delayed": false,
+                "scheduledTime": "2026-12-18T08:25:00"
+              }
+            }
+          ],
+          "fixed": false,
+          "id": "3115;3087;2026-12-18;",
+          "legId": "/jp/leg/352%3AOXF_PAD_W77394",
+          "origin": [
+            {
+              "cancelled": false,
+              "platform": "3",
+              "station": "/data/stations/3115",
+              "time": {
+                "adjustedTime": "2026-12-18T07:30:00",
+                "confidence": "Estimate",
+                "delayed": false,
+                "scheduledTime": "2026-12-18T07:30:00"
+              }
+            }
+          ],
+          "serviceDetails": {
+            "facilities": {
+              "buffet": false,
+              "firstClass": true,
+              "firstClassMeal": false,
+              "firstClassRestaurant": false,
+              "hotFood": false,
+              "restaurant": false,
+              "trolley": false,
+              "wheelchair": false
+            },
+            "isCountedPlace": false,
+            "isTemporaryTrain": false,
+            "mode": "Train",
+            "reservable": "Possible",
+            "retailServiceId": "GW740800",
+            "toc": "/data/tocs/GW",
+            "trainDestination": "/data/stations/3087",
+            "trainOrigin": "/data/stations/3607",
+            "trainUid": "W77394"
+          }
+        }
+      ],
+      "origin": {
+        "station": "/data/stations/3115",
+        "time": {
+          "adjustedTime": "2026-12-18T07:30:00",
+          "confidence": "Estimate",
+          "delayed": false,
+          "scheduledTime": "2026-12-18T07:30:00"
+        }
+      },
+      "status": "successful"
+    },
+    "/jp/journeys/352%3A352%3AOXF_PAD_W77396": {
+      "callingPoints": "/jp/journeys/352%3A352%3AOXF_PAD_W77396/calling-points",
+      "changes": 0,
+      "destination": {
+        "station": "/data/stations/3087",
+        "time": {
+          "adjustedTime": "2026-12-18T08:45:00",
+          "confidence": "Estimate",
+          "delayed": false,
+          "scheduledTime": "2026-12-18T08:45:00"
+        }
+      },
+      "isCancelled": false,
+      "isLegal": true,
+      "isOvertaken": false,
+      "legs": [
+        {
+          "destination": [
+            {
+              "cancelled": false,
+              "platform": "5",
+              "station": "/data/stations/3087",
+              "time": {
+                "adjustedTime": "2026-12-18T08:45:00",
+                "confidence": "Estimate",
+                "delayed": false,
+                "scheduledTime": "2026-12-18T08:45:00"
+              }
+            }
+          ],
+          "fixed": false,
+          "id": "3115;3087;2026-12-18;",
+          "legId": "/jp/leg/352%3AOXF_PAD_W77396",
+          "origin": [
+            {
+              "cancelled": false,
+              "platform": "3",
+              "station": "/data/stations/3115",
+              "time": {
+                "adjustedTime": "2026-12-18T07:53:00",
+                "confidence": "Estimate",
+                "delayed": false,
+                "scheduledTime": "2026-12-18T07:53:00"
+              }
+            }
+          ],
+          "serviceDetails": {
+            "facilities": {
+              "buffet": false,
+              "firstClass": true,
+              "firstClassMeal": false,
+              "firstClassRestaurant": false,
+              "hotFood": false,
+              "restaurant": false,
+              "trolley": true,
+              "wheelchair": false
+            },
+            "isCountedPlace": false,
+            "isTemporaryTrain": false,
+            "mode": "Train",
+            "reservable": "Possible",
+            "retailServiceId": "GW741200",
+            "toc": "/data/tocs/GW",
+            "trainDestination": "/data/stations/3087",
+            "trainOrigin": "/data/stations/4891",
+            "trainUid": "W77396"
+          }
+        }
+      ],
+      "origin": {
+        "station": "/data/stations/3115",
+        "time": {
+          "adjustedTime": "2026-12-18T07:53:00",
+          "confidence": "Estimate",
+          "delayed": false,
+          "scheduledTime": "2026-12-18T07:53:00"
+        }
+      },
+      "status": "successful"
+    },
+    "/jp/journeys/352%3A352%3APAD_OXF_W76850": {
+      "callingPoints": "/jp/journeys/352%3A352%3APAD_OXF_W76850/calling-points",
+      "changes": 0,
+      "destination": {
+        "station": "/data/stations/3115",
+        "time": {
+          "adjustedTime": "2026-12-18T08:16:00",
+          "confidence": "Estimate",
+          "delayed": false,
+          "scheduledTime": "2026-12-18T08:16:00"
+        }
+      },
+      "isCancelled": false,
+      "isLegal": true,
+      "isOvertaken": false,
+      "legs": [
+        {
+          "destination": [
+            {
+              "cancelled": false,
+              "platform": "4",
+              "station": "/data/stations/3115",
+              "time": {
+                "adjustedTime": "2026-12-18T08:16:00",
+                "confidence": "Estimate",
+                "delayed": false,
+                "scheduledTime": "2026-12-18T08:16:00"
+              }
+            }
+          ],
+          "fixed": false,
+          "id": "3087;3115;2026-12-18;",
+          "legId": "/jp/leg/352%3APAD_OXF_W76850",
+          "origin": [
+            {
+              "cancelled": false,
+              "platform": "3",
+              "station": "/data/stations/3087",
+              "time": {
+                "adjustedTime": "2026-12-18T07:20:00",
+                "confidence": "Estimate",
+                "delayed": false,
+                "scheduledTime": "2026-12-18T07:20:00"
+              }
+            }
+          ],
+          "serviceDetails": {
+            "facilities": {
+              "buffet": false,
+              "firstClass": true,
+              "firstClassMeal": false,
+              "firstClassRestaurant": false,
+              "hotFood": false,
+              "restaurant": false,
+              "trolley": false,
+              "wheelchair": false
+            },
+            "isCountedPlace": false,
+            "isTemporaryTrain": false,
+            "mode": "Train",
+            "reservable": "Possible",
+            "retailServiceId": "GW730900",
+            "toc": "/data/tocs/GW",
+            "trainDestination": "/data/stations/3115",
+            "trainOrigin": "/data/stations/3087",
+            "trainUid": "W76850"
+          }
+        }
+      ],
+      "origin": {
+        "station": "/data/stations/3087",
+        "time": {
+          "adjustedTime": "2026-12-18T07:20:00",
+          "confidence": "Estimate",
+          "delayed": false,
+          "scheduledTime": "2026-12-18T07:20:00"
+        }
+      },
+      "status": "successful"
+    },
+    "/jp/journeys/352%3A352%3APAD_OXF_W77588": {
+      "callingPoints": "/jp/journeys/352%3A352%3APAD_OXF_W77588/calling-points",
+      "changes": 0,
+      "destination": {
+        "station": "/data/stations/3115",
+        "time": {
+          "adjustedTime": "2026-12-18T08:42:00",
+          "confidence": "Estimate",
+          "delayed": false,
+          "scheduledTime": "2026-12-18T08:42:00"
+        }
+      },
+      "isCancelled": false,
+      "isLegal": true,
+      "isOvertaken": false,
+      "legs": [
+        {
+          "destination": [
+            {
+              "cancelled": false,
+              "platform": "4",
+              "station": "/data/stations/3115",
+              "time": {
+                "adjustedTime": "2026-12-18T08:42:00",
+                "confidence": "Estimate",
+                "delayed": false,
+                "scheduledTime": "2026-12-18T08:42:00"
+              }
+            }
+          ],
+          "fixed": false,
+          "id": "3087;3115;2026-12-18;",
+          "legId": "/jp/leg/352%3APAD_OXF_W77588",
+          "origin": [
+            {
+              "cancelled": false,
+              "platform": "2",
+              "station": "/data/stations/3087",
+              "time": {
+                "adjustedTime": "2026-12-18T07:50:00",
+                "confidence": "Estimate",
+                "delayed": false,
+                "scheduledTime": "2026-12-18T07:50:00"
+              }
+            }
+          ],
+          "serviceDetails": {
+            "facilities": {
+              "buffet": false,
+              "firstClass": true,
+              "firstClassMeal": false,
+              "firstClassRestaurant": false,
+              "hotFood": false,
+              "restaurant": false,
+              "trolley": false,
+              "wheelchair": false
+            },
+            "isCountedPlace": false,
+            "isTemporaryTrain": false,
+            "mode": "Train",
+            "reservable": "Possible",
+            "retailServiceId": "GW731100",
+            "toc": "/data/tocs/GW",
+            "trainDestination": "/data/stations/4892",
+            "trainOrigin": "/data/stations/3087",
+            "trainUid": "W77588"
+          }
+        }
+      ],
+      "origin": {
+        "station": "/data/stations/3087",
+        "time": {
+          "adjustedTime": "2026-12-18T07:50:00",
+          "confidence": "Estimate",
+          "delayed": false,
+          "scheduledTime": "2026-12-18T07:50:00"
+        }
+      },
+      "status": "successful"
+    },
+    "/jp/journeys/352%3A352%3APAD_RDG_W77053%2C352%3ARDG_OXF_W01345": {
+      "callingPoints": "/jp/journeys/352%3A352%3APAD_RDG_W77053%2C352%3ARDG_OXF_W01345/calling-points",
+      "changes": 1,
+      "destination": {
+        "station": "/data/stations/3115",
+        "time": {
+          "adjustedTime": "2026-12-18T08:38:00",
+          "confidence": "Estimate",
+          "delayed": false,
+          "scheduledTime": "2026-12-18T08:38:00"
+        }
+      },
+      "isCancelled": false,
+      "isLegal": true,
+      "isOvertaken": false,
+      "legs": [
+        {
+          "destination": [
+            {
+              "cancelled": false,
+              "platform": "8",
+              "station": "/data/stations/3149",
+              "time": {
+                "adjustedTime": "2026-12-18T07:55:00",
+                "confidence": "Estimate",
+                "delayed": false,
+                "scheduledTime": "2026-12-18T07:55:00"
+              }
+            }
+          ],
+          "fixed": false,
+          "id": "3087;3149;2026-12-18;",
+          "legId": "/jp/leg/352%3APAD_RDG_W77053",
+          "origin": [
+            {
+              "cancelled": false,
+              "platform": "4",
+              "station": "/data/stations/3087",
+              "time": {
+                "adjustedTime": "2026-12-18T07:31:00",
+                "confidence": "Estimate",
+                "delayed": false,
+                "scheduledTime": "2026-12-18T07:31:00"
+              }
+            }
+          ],
+          "serviceDetails": {
+            "facilities": {
+              "buffet": false,
+              "firstClass": true,
+              "firstClassMeal": false,
+              "firstClassRestaurant": false,
+              "hotFood": false,
+              "restaurant": false,
+              "trolley": true,
+              "wheelchair": false
+            },
+            "isCountedPlace": false,
+            "isTemporaryTrain": false,
+            "mode": "Train",
+            "reservable": "Possible",
+            "retailServiceId": "GW330500",
+            "toc": "/data/tocs/GW",
+            "trainDestination": "/data/stations/4731",
+            "trainOrigin": "/data/stations/3087",
+            "trainUid": "W77053"
+          }
+        },
+        {
+          "destination": [
+            {
+              "cancelled": false,
+              "platform": "4",
+              "station": "/data/stations/3115",
+              "time": {
+                "adjustedTime": "2026-12-18T08:38:00",
+                "confidence": "Estimate",
+                "delayed": false,
+                "scheduledTime": "2026-12-18T08:38:00"
+              }
+            }
+          ],
+          "fixed": false,
+          "id": "3149;3115;2026-12-18;",
+          "legId": "/jp/leg/352%3ARDG_OXF_W01345",
+          "origin": [
+            {
+              "cancelled": false,
+              "platform": "8",
+              "station": "/data/stations/3149",
+              "time": {
+                "adjustedTime": "2026-12-18T08:15:00",
+                "confidence": "Estimate",
+                "delayed": false,
+                "scheduledTime": "2026-12-18T08:15:00"
+              }
+            }
+          ],
+          "serviceDetails": {
+            "facilities": {
+              "buffet": false,
+              "firstClass": true,
+              "firstClassMeal": false,
+              "firstClassRestaurant": false,
+              "hotFood": false,
+              "restaurant": false,
+              "trolley": true,
+              "wheelchair": false
+            },
+            "isCountedPlace": false,
+            "isTemporaryTrain": false,
+            "mode": "Train",
+            "reservable": "Possible",
+            "retailServiceId": "XC308000",
+            "toc": "/data/tocs/XC",
+            "trainDestination": "/data/stations/2968",
+            "trainOrigin": "/data/stations/5876",
+            "trainUid": "W01345"
+          }
+        }
+      ],
+      "origin": {
+        "station": "/data/stations/3087",
+        "time": {
+          "adjustedTime": "2026-12-18T07:31:00",
+          "confidence": "Estimate",
+          "delayed": false,
+          "scheduledTime": "2026-12-18T07:31:00"
+        }
+      },
+      "status": "successful"
+    }
+  },
+  "result": {
+    "outward": [
+      {
+        "fares": {
+          "cheapest": {
+            "outwardSingle": "/jp/fares/3115%3A1072%3AW2M%3A00820%3AQS%3A0%3A20261218%3A20261218%3A0001%3A%3A%3A%3A%3A%3A%3A%3A9%3A%3A%3A930%2C1%2C0%2C003%2CYNG%2C%2C470%2C1400%2C%3AGW%7CB49I4iGf%2BxNmOHT4xDmvfdalOjc%3D",
+            "totalPrice": 930
+          },
+          "returns": [
+            "/jp/fares/3115%3A0035%3AADT%3A00000%3A%3A0%3A20261218%3A20261218%3A0001%3A20261218%3A20261218%3A0001%3A%3A%3A%3AADT%3A%3A%3A%3A7035%2C1%2C0%2C003%2CYNG%2C%2C3535%2C10570%2C%3AGW%7CyJBqISJXDPn0a9k1pR%2BzRAGc2Co%3D",
+            "/jp/fares/3115%3A0035%3AFDT%3A00000%3A%3A0%3A20261218%3A20261218%3A0001%3A20261218%3A20261218%3A0001%3A%3A%3A%3AFDT%3A%3A%3A%3A18290%2C1%2C0%2C000%2C%2C%2C%2C18290%2C%3AGW%7CAY89wBRuX4sBglASr3u4%2BW9APC4%3D"
+          ],
+          "singles": [
+            "/jp/fares/3115%3A1072%3AW1L%3A00820%3AQS%3A0%3A20261218%3A20261218%3A0001%3A%3A%3A%3A%3A%3A%3A%3A9%3A%3A%3A2230%2C1%2C0%2C003%2CYNG%2C%2C1120%2C3350%2C%3AGW%7CPSJUOXZiR80%2FVoBBrEYO%2BPYpt24%3D",
+            "/jp/fares/3115%3A1072%3AW2M%3A00820%3AQS%3A0%3A20261218%3A20261218%3A0001%3A%3A%3A%3A%3A%3A%3A%3A9%3A%3A%3A930%2C1%2C0%2C003%2CYNG%2C%2C470%2C1400%2C%3AGW%7CB49I4iGf%2BxNmOHT4xDmvfdalOjc%3D",
+            "/jp/fares/3115%3A1072%3ASDS%3A00000%3A%3A0%3A20261218%3A20261218%3A0001%3A%3A%3A%3A%3A%3A%3ASDS%3A%3A%3A%3A3140%2C1%2C0%2C003%2CYNG%2C%2C1580%2C4720%2C%3AGW%7CH7m%2Buo%2FCyIu%2FFAytpjrtdqVjVuA%3D",
+            "/jp/fares/3115%3A1072%3AFDS%3A00000%3A%3A0%3A20261218%3A20261218%3A0001%3A%3A%3A%3A%3A%3A%3AFDS%3A%3A%3A%3A8630%2C1%2C0%2C000%2C%2C%2C%2C8630%2C%3AGW%7C2Z3L4gJAKPSk3Kik4PR32dcmraQ%3D"
+          ]
+        },
+        "journey": "/jp/journeys/352%3A352%3AOXF_PAD_W76844"
+      },
+      {
+        "fares": {
+          "cheapest": {
+            "outwardSingle": "/jp/fares/3115%3A1072%3AW2M%3A00820%3AQS%3A0%3A20261218%3A20261218%3A0001%3A%3A%3A%3A%3A%3A%3A%3A9%3A%3A%3A930%2C1%2C0%2C003%2CYNG%2C%2C470%2C1400%2C%3AGW%7CB49I4iGf%2BxNmOHT4xDmvfdalOjc%3D",
+            "totalPrice": 930
+          },
+          "returns": [
+            "/jp/fares/3115%3A0035%3AADT%3A00000%3A%3A0%3A20261218%3A20261218%3A0001%3A20261218%3A20261218%3A0001%3A%3A%3A%3AADT%3A%3A%3A%3A7035%2C1%2C0%2C003%2CYNG%2C%2C3535%2C10570%2C%3AGW%7CyJBqISJXDPn0a9k1pR%2BzRAGc2Co%3D",
+            "/jp/fares/3115%3A0035%3AFDT%3A00000%3A%3A0%3A20261218%3A20261218%3A0001%3A20261218%3A20261218%3A0001%3A%3A%3A%3AFDT%3A%3A%3A%3A18290%2C1%2C0%2C000%2C%2C%2C%2C18290%2C%3AGW%7CAY89wBRuX4sBglASr3u4%2BW9APC4%3D"
+          ],
+          "singles": [
+            "/jp/fares/3115%3A1072%3AW1L%3A00820%3AQS%3A0%3A20261218%3A20261218%3A0001%3A%3A%3A%3A%3A%3A%3A%3A9%3A%3A%3A2230%2C1%2C0%2C003%2CYNG%2C%2C1120%2C3350%2C%3AGW%7CPSJUOXZiR80%2FVoBBrEYO%2BPYpt24%3D",
+            "/jp/fares/3115%3A1072%3AW2M%3A00820%3AQS%3A0%3A20261218%3A20261218%3A0001%3A%3A%3A%3A%3A%3A%3A%3A9%3A%3A%3A930%2C1%2C0%2C003%2CYNG%2C%2C470%2C1400%2C%3AGW%7CB49I4iGf%2BxNmOHT4xDmvfdalOjc%3D",
+            "/jp/fares/3115%3A1072%3ASDS%3A00000%3A%3A0%3A20261218%3A20261218%3A0001%3A%3A%3A%3A%3A%3A%3ASDS%3A%3A%3A%3A3140%2C1%2C0%2C003%2CYNG%2C%2C1580%2C4720%2C%3AGW%7CH7m%2Buo%2FCyIu%2FFAytpjrtdqVjVuA%3D",
+            "/jp/fares/3115%3A1072%3AFDS%3A00000%3A%3A0%3A20261218%3A20261218%3A0001%3A%3A%3A%3A%3A%3A%3AFDS%3A%3A%3A%3A8630%2C1%2C0%2C000%2C%2C%2C%2C8630%2C%3AGW%7C2Z3L4gJAKPSk3Kik4PR32dcmraQ%3D"
+          ]
+        },
+        "journey": "/jp/journeys/352%3A352%3AOXF_PAD_W77394"
+      },
+      {
+        "fares": {
+          "cheapest": {
+            "outwardSingle": "/jp/fares/3115%3A1072%3AW2M%3A00820%3AQS%3A0%3A20261218%3A20261218%3A0001%3A%3A%3A%3A%3A%3A%3A%3A9%3A%3A%3A930%2C1%2C0%2C003%2CYNG%2C%2C470%2C1400%2C%3AGW%7CB49I4iGf%2BxNmOHT4xDmvfdalOjc%3D",
+            "totalPrice": 930
+          },
+          "returns": [
+            "/jp/fares/3115%3A0035%3AADT%3A00000%3A%3A0%3A20261218%3A20261218%3A0001%3A20261218%3A20261218%3A0001%3A%3A%3A%3AADT%3A%3A%3A%3A7035%2C1%2C0%2C003%2CYNG%2C%2C3535%2C10570%2C%3AGW%7CyJBqISJXDPn0a9k1pR%2BzRAGc2Co%3D",
+            "/jp/fares/3115%3A0035%3AFDT%3A00000%3A%3A0%3A20261218%3A20261218%3A0001%3A20261218%3A20261218%3A0001%3A%3A%3A%3AFDT%3A%3A%3A%3A18290%2C1%2C0%2C000%2C%2C%2C%2C18290%2C%3AGW%7CAY89wBRuX4sBglASr3u4%2BW9APC4%3D"
+          ],
+          "singles": [
+            "/jp/fares/3115%3A1072%3AW1L%3A00820%3AQS%3A0%3A20261218%3A20261218%3A0001%3A%3A%3A%3A%3A%3A%3A%3A9%3A%3A%3A2230%2C1%2C0%2C003%2CYNG%2C%2C1120%2C3350%2C%3AGW%7CPSJUOXZiR80%2FVoBBrEYO%2BPYpt24%3D",
+            "/jp/fares/3115%3A1072%3AW2M%3A00820%3AQS%3A0%3A20261218%3A20261218%3A0001%3A%3A%3A%3A%3A%3A%3A%3A9%3A%3A%3A930%2C1%2C0%2C003%2CYNG%2C%2C470%2C1400%2C%3AGW%7CB49I4iGf%2BxNmOHT4xDmvfdalOjc%3D",
+            "/jp/fares/3115%3A1072%3ASDS%3A00000%3A%3A0%3A20261218%3A20261218%3A0001%3A%3A%3A%3A%3A%3A%3ASDS%3A%3A%3A%3A3140%2C1%2C0%2C003%2CYNG%2C%2C1580%2C4720%2C%3AGW%7CH7m%2Buo%2FCyIu%2FFAytpjrtdqVjVuA%3D",
+            "/jp/fares/3115%3A1072%3AFDS%3A00000%3A%3A0%3A20261218%3A20261218%3A0001%3A%3A%3A%3A%3A%3A%3AFDS%3A%3A%3A%3A8630%2C1%2C0%2C000%2C%2C%2C%2C8630%2C%3AGW%7C2Z3L4gJAKPSk3Kik4PR32dcmraQ%3D"
+          ]
+        },
+        "journey": "/jp/journeys/352%3A352%3AOXF_PAD_W77396"
+      }
+    ]
+  }
+}

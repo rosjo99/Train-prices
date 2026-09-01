@@ -1,7 +1,7 @@
 # Train Price Alert Tool
 
 ## What this project does
-Checks National Rail Enquiries every 6 hours for the price of two
+Checks TransPennine Express's booking engine every 6 hours for the price of two
 specific Oxford → London Paddington trains (searched with a 16-25
 railcard applied) and emails an alert when either fare's cheapest price
 falls below GBP 10 — whether or not that price is confirmed as the
@@ -11,7 +11,7 @@ date already marked as booked (see "Marking a date as already booked")
 is still checked and logged, just never alerted on.
 
 ## Constraints
-- Must handle NRE's dynamic (client-rendered) journey planner — a
+- Must handle TPE's dynamic (client-rendered) journeys-grid — a
   headless browser drives it, but via a deep-link URL, not by filling
   in the form (see Tech decisions)
 - Runs every 6 hours via GitHub Actions cron (no time-of-day gate in
@@ -31,26 +31,47 @@ summary an agent needs to write correct code, not the history of how we
 got here.
 
 - **Language:** Python 3.12. Dependencies pinned in `requirements.txt`
-  (`playwright`, `requests`, `pytest`). Money uses `decimal.Decimal`,
-  never `float`; all dates/times go through
+  (`camoufox[geoip]` — which brings Playwright with it, since Camoufox
+  drives it under the hood — `requests`, `pytest`). Money uses
+  `decimal.Decimal`, never `float`; all dates/times go through
   `zoneinfo.ZoneInfo("Europe/London")`, never a naive clock read.
-- **Retailer: National Rail Enquiries.** NRE has no bot protection at all (confirmed via 20+ live
-  probe runs). See `docs/plans/001-train-price-alert.md`
-  §1.4/§1.5/§1.6/§1.7/§1.8/§1.9/§1.10/§1.11/§1.12/§1.13/§1.14/§1.15/§1.16/§2.2.
-- **Scraping approach:** Playwright (sync API), headless Chromium,
-  navigating straight to a fully-parameterised deep-link URL —
-  `https://www.nationalrail.co.uk/journey-planner/?type=single&origin=OXF&destination=PAD&leavingType=departing&leavingDate=DDMMYY&leavingHour=HH&leavingMin=MM&adults=1&railcards=YNG%7C1&extraTime=0`
-  — never by driving the interactive form. Form-filling with a past
-  departure time reliably triggered a third-party redirect to a
-  Booking.com hotel search; the deep-link (always a valid future
-  date/time) never has. Prices are read from the same-origin XHR to
-  `jpservices.nationalrail.co.uk/journey-planner` (JSON, includes a
-  `railcardFares` array per fare), with a DOM scrape as fallback. Still
-  guards against the ad-redirect as defense in depth (blocks
-  cross-origin iframes, backstops navigation away from
-  `nationalrail.co.uk`) even though the deep-link itself never triggers
-  it. No proxies, stealth plugins, or CAPTCHA-solving — not needed.
-- When attempting other booking platforms use the Camoufox browser.
+- **Retailer: TransPennine Express (`ticket.tpexpress.co.uk`).** No bot
+  protection observed across the Camoufox diagnostic probe or the
+  fixture-capture run (GitHub Actions runs 33525860120 / 33527007099,
+  2026-09-01). See `docs/plans/005-migrate-to-tpe.md` §1.5. Historical
+  note: National Rail Enquiries was the previous retailer this repo
+  scraped, and Trainline was rejected before that for DataDome bot
+  protection — see `docs/plans/001-train-price-alert.md` for that
+  history, kept as a record, not as the current state.
+- **Scraping approach:** Camoufox (headless, `humanize=True`, Firefox-
+  based) rather than plain Playwright/Chromium — mandated by this file
+  for any booking platform other than NRE, and validated live against the
+  real TPE site (see `scripts/capture_fixture_tpe.py`, the reference
+  implementation). Launch shape: `with Camoufox(headless=True,
+  humanize=True, locale="en-GB") as browser:` then `NewContext(browser,
+  locale="en-GB", timezone_id="Europe/London", viewport=...)`. Navigates
+  straight to a fully-parameterised deep-link URL —
+  `https://ticket.tpexpress.co.uk/journeys-grid/{origin}/{destination}/{date}T{hour}:{minute}//1//{railcard}x1?...`
+  (ISO date, and the railcard as a `YNGx1`-style path segment) — never by
+  driving the interactive form. The deep-link is anchored
+  `config.ANCHOR_OFFSET_MINUTES` before the earliest target departure,
+  not at it, because TPE's frontend hardcodes returning only the next 3
+  journeys from the anchor with no lever to raise that — anchoring
+  exactly at the earliest target risked an earlier service using up a
+  "slot" and pushing the later target out of the window (confirmed live,
+  see `docs/plans/005-migrate-to-tpe.md` §1.4). Prices are read from the
+  same-origin **POST** to `api.tpexpress.co.uk/jp/journey-plan` (JSON,
+  one already-discounted `totalPrice` per fare), matched on the exact
+  path since the same host also serves sibling endpoints (e.g.
+  `/jp/plusbus`) that could otherwise overwrite the real response. **No
+  DOM fallback** — no TPE results selector has ever been captured or
+  verified, so a truthful `TimeoutScrapeError` is kept as the failure
+  mode rather than inventing one (`docs/plans/005-migrate-to-tpe.md` §4.2
+  item 9). Iframe/hijack guards are still kept as defense in depth against
+  `config.TPE_HOST_SUFFIX` (covering `www.`/`ticket.`/`api.`), since the
+  page loads third-party scripts (Usercentrics CMP, Google Maps, PayPal)
+  outside our control — even though no hijack has ever been observed on
+  TPE. No proxies, stealth plugins, or CAPTCHA-solving — not needed.
 - **Term-date logic:** plain Python module `src/term_dates.py` — a
   commented `TERMS` data block (term name, inclusive start/end, excluded
   ranges/days) plus pure functions `is_in_term()`, `is_checkable_day()`,
@@ -68,8 +89,8 @@ got here.
   firing is harmless since the same dates get checked next time. GitHub
   disables scheduled workflows after 60 days of repo inactivity — any
   commit or manual dispatch re-arms them.
-- **Concurrency:** up to `src.main.PARALLEL_DATES` (5) travel dates
-  scraped at once, each its own headless Chromium, via a continuous
+- **Concurrency:** up to `src.main.PARALLEL_DATES` (8) travel dates
+  scraped at once, each its own Camoufox instance, via a continuous
   queue scheduler in `main()` (`src/main.py`) — a rolling window
   refilled as soon as any scrape finishes, not fixed batches. Results
   are finalized (logged, counted toward `MAX_CONSECUTIVE_FAILURES`,
@@ -79,18 +100,33 @@ got here.
   The date closest to `FULL_RETRY_HORIZON_DAYS` is dispatched first
   (`src.main._dispatch_order`, gated by
   `src.main.BOUNDARY_PRIORITY_ZONE_DAYS`) since it's predictably the
-  slowest to fail. `FULL_RETRY_HORIZON_DAYS` = 95 days (NRE's observed
-  fare-release horizon, measured at 94 days three times) — dates beyond
-  it get one attempt instead of three, since a timeout that far out is
-  the expected answer, not a fault; the date is still fetched, logged,
-  and alert-eligible every run. Per-attempt timing: page-result wait
-  budget 10s, navigation timeout 20s
-  (`NAVIGATION_TIMEOUT_SECONDS`), poll interval 250ms, scrape-retry
-  backoff 5s/10s — see `src/scraper.py`. No fixed pause between dates
-  (that was serial-only pacing, removed once scraping went concurrent).
-  See `docs/plans/002-speed-up-price-check-run.md` and
-  `docs/plans/003-scheduler-and-retry-horizon.md` for the measurements
-  behind these numbers.
+  slowest to fail. `FULL_RETRY_HORIZON_DAYS` = 400 days — deliberately
+  widened from the old NRE-derived value of 95 (itself based on 94 days
+  measured three times against NRE's fare-release horizon specifically;
+  that measurement does not transfer to TPE, the retailer this repo now
+  scrapes). Nobody has measured TPE's own fare-release horizon from this
+  codebase; the only evidence about it is **the user's own domain
+  knowledge of the retailer** — not a measurement this repo has made —
+  that TPE sells tickets many months further ahead than NRE did. 400 is
+  therefore a deliberately generous placeholder chosen so that no
+  candidate date within the current school year is demoted to
+  `SPECULATIVE_ATTEMPTS`, rather than a measured or computed value —
+  see `docs/plans/005-migrate-to-tpe.md` §7.1. The speculative-attempt
+  code path itself is untouched and re-arms the moment a real TPE horizon
+  is measured; until then, `MAX_CONSECUTIVE_FAILURES` bounds the cost of
+  this assumption being wrong. Per-attempt timing: page-result wait
+  budget 20s, navigation timeout 60s (`NAVIGATION_TIMEOUT_SECONDS`), poll
+  interval 250ms, scrape-retry backoff 5s/10s — see `src/scraper.py`.
+  These per-attempt numbers are themselves **updated but still
+  provisional**: the old 10s/20s pair was measured against NRE +
+  Chromium (`docs/plans/002-speed-up-price-check-run.md`,
+  `docs/plans/003-scheduler-and-retry-horizon.md`); Camoufox/Firefox with
+  `humanize=True` has not been measured yet, so 20s/60s are carried over
+  from `scripts/capture_fixture_tpe.py`'s validated working values as a
+  starting point, to be re-tightened from the first full live run's real
+  timings (`docs/plans/005-migrate-to-tpe.md` §4.2 item 8/§7.2/§9). No
+  fixed pause between dates (that was serial-only pacing, removed once
+  scraping went concurrent).
 - **Email service:** Resend free tier, single
   `POST https://api.resend.com/emails` with a Bearer token. No SMTP,
   OAuth, or app-password rotation. `ALERT_EMAIL_TO` may hold one or more
@@ -129,7 +165,13 @@ got here.
   confirmed is still tracked as `railcard_applied` and shown in the
   email (muted `*` + legend, only when some displayed fare's discount
   wasn't confirmed) and in `price-history.csv` — see
-  `docs/plans/004-redesign-alert-email.md` §4.6.4.
+  `docs/plans/004-redesign-alert-email.md` §4.6.4. TPE returns one
+  already-discounted `totalPrice` per fare (not NRE's separate
+  undiscounted/railcard-discounted pair), so `railcard_applied` is
+  determined by whether the winning fare's `tickets[].railcard` ref
+  matches `config.RAILCARD_CODE`, rather than from a separate
+  `railcardFares` array — see `src/parser.py` and
+  `docs/plans/005-migrate-to-tpe.md` §3.2.
 
 ## Which dates get checked
 The gate applies to **travel dates**, not the day the job runs. Each
@@ -141,15 +183,23 @@ and the run is a clean no-op (no browser launch, no email).
 
 Early in a term this is 100+ dates per run, checked in full every run
 by design so prices stay fresh — accepted tradeoff, mainly wall-clock
-run time, not IP reputation (NRE has no bot protection to trip). See
-`docs/plans/001-train-price-alert.md` §2.2/§1.4. Concurrency
-(`PARALLEL_DATES`) and the `FULL_RETRY_HORIZON_DAYS` single-attempt
-zone (see Tech decisions → Concurrency) both cut actual run time well
-below a naive serial/three-attempt estimate.
+run time, not IP reputation (TPE has shown no bot protection to trip).
+See `docs/plans/001-train-price-alert.md` §2.2/§1.4. Concurrency
+(`PARALLEL_DATES`) is unchanged from the NRE era, but the
+`FULL_RETRY_HORIZON_DAYS` single-attempt zone that used to also cut run
+time is currently **dormant** (see Tech decisions → Concurrency) — so
+run time should not currently be assumed to be as short as the old NRE-
+era projections implied.
 
-NRE's fare-release horizon is observed, not guaranteed — 94 days as of
-the 2026-08-31/09-01 measurements (`docs/plans/002-speed-up-price-check-run.md`
-§1.7), expected to drift at NRE's December/May timetable changes.
+No TPE fare-release horizon has been measured from this codebase — the
+94-day figure NRE-era runs measured (`docs/plans/002-speed-up-price-check-run.md`
+§1.7) was specific to NRE and is not evidence about TPE. The working
+assumption until it is measured (per the user's own domain knowledge of
+the retailer, not a measurement — see `docs/plans/005-migrate-to-tpe.md`
+§7.1) is that every candidate date within the current school year is
+priceable by TPE; `FULL_RETRY_HORIZON_DAYS` is set generously past all of
+them accordingly. §9 of that plan is what should replace this belief with
+a real number from the first full live run.
 
 ## Marking a date as already booked (no coding involved)
 
@@ -202,13 +252,23 @@ holidays), no checks should run at all.
 
 ## Plans
 - `docs/plans/001-train-price-alert.md` — full implementation plan,
-  research findings, and the seven task specs.
+  research findings, and the seven task specs. Its NRE-specific research
+  (retailer choice, scraping shape, fare-release horizon) is now
+  historical — superseded by `docs/plans/005-migrate-to-tpe.md` — kept as
+  a record of how this repo got here, not as the current state.
 - `docs/plans/002-speed-up-price-check-run.md`,
   `docs/plans/003-scheduler-and-retry-horizon.md`,
   `docs/plans/004-redesign-alert-email.md` — later changes; hold the
-  measured evidence for the numbers in Tech decisions. Only read these
-  on demand (e.g. when a related number needs re-justifying), not
-  routinely.
+  measured evidence for the numbers in Tech decisions, though the
+  specific timing/horizon numbers from 002/003 are NRE-era and superseded
+  by 005 where the two disagree. Only read these on demand (e.g. when a
+  related number needs re-justifying), not routinely.
+- `docs/plans/005-migrate-to-tpe.md` — the NRE→TPE migration: retailer
+  and browser swap (Playwright/Chromium → Camoufox/Firefox), the
+  research/evidence behind every TPE-specific constant in this file, and
+  the honest unknowns (TPE's fare-release horizon, Camoufox per-attempt
+  timing, `PARALLEL_DATES` under Firefox) still awaiting a real
+  measurement.
 
 ## Claude Code workflow: use this repo's sub-agents
 

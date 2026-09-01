@@ -1,11 +1,12 @@
 """Tests for src.scraper.
 
 No test in this file ever launches a real browser or makes a real network
-call: Playwright's sync_playwright() factory is always monkeypatched to a
-set of fake objects (FakePlaywright/FakeBrowser/FakeContext/FakePage/
-FakeResponse below) that mimic just enough of the sync API surface for
-src.scraper to drive. See docs/plans/001-train-price-alert.md Task 3 for
-the acceptance criteria these tests transcribe.
+call: `camoufox.sync_api.Camoufox` and `camoufox.sync_api.NewContext` are
+always monkeypatched to a set of fake objects (FakeCamoufoxFactory/
+FakeBrowser/FakeContext/FakePage/FakeResponse below) that mimic just
+enough of the Camoufox/Playwright sync API surface for src.scraper to
+drive. See docs/plans/005-migrate-to-tpe.md Task 3/§6.2 for the
+acceptance criteria these tests transcribe.
 """
 
 from __future__ import annotations
@@ -26,18 +27,17 @@ from src import scraper
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
-NRE_JOURNEY_PLANNER_URL = (
-    "https://www.nationalrail.co.uk/journey-planner/"
-    "?type=single&origin=OXF&destination=PAD&leavingType=departing"
-    "&leavingDate=080926&leavingHour=07&leavingMin=25"
-    "&adults=1&railcards=YNG%7C1&extraTime=0#O"
+TPE_JOURNEYS_GRID_URL = (
+    "https://ticket.tpexpress.co.uk/journeys-grid/OXF/PAD/2026-09-08T07:20"
+    "//1//YNGx1?departNow=no&realTime=no&searchPreferences=%2C%2C%2C%2Ctrue"
+    "&showAdditionalRoutes=no&showCheapest=no&tocSpecific=no"
 )
-API_RESPONSE_URL = "https://jpservices.nationalrail.co.uk/journey-planner"
+API_RESPONSE_URL = "https://api.tpexpress.co.uk/jp/journey-plan"
 
 
 # ---------------------------------------------------------------------------
-# Fakes: a minimal stand-in for the bits of Playwright's sync API that
-# src.scraper touches.
+# Fakes: a minimal stand-in for the bits of Camoufox/Playwright's sync API
+# that src.scraper touches.
 # ---------------------------------------------------------------------------
 
 
@@ -70,35 +70,24 @@ class FakeLocator:
         self.clicked = True
 
 
-class FakeElement:
-    def __init__(self, html: str):
-        self._html = html
-
-    def inner_html(self) -> str:
-        return self._html
-
-
 class FakePage:
     def __init__(
         self,
         *,
         responses: list[FakeResponse] | None = None,
         banner_present: bool = False,
-        dom_html: str | None = None,
-        url: str = NRE_JOURNEY_PLANNER_URL,
+        url: str = TPE_JOURNEYS_GRID_URL,
         content: str = "<html>ok</html>",
         goto_raises: Exception | None = None,
     ):
         self._handlers: list[Any] = []
         self._responses = responses or []
         self.banner_present = banner_present
-        self.dom_html = dom_html
         self.url = url
         self._content = content
         self.goto_raises = goto_raises
         self.goto_calls: list[tuple[str, str | None, float | None]] = []
         self.screenshot_calls: list[str] = []
-        self.closed = False
         self.cookie_locator = FakeLocator(present=banner_present)
 
     def on(self, event: str, handler: Any) -> None:
@@ -125,11 +114,6 @@ class FakePage:
             return self.cookie_locator
         return FakeLocator(present=False)
 
-    def query_selector(self, selector: str) -> FakeElement | None:
-        if self.dom_html is None:
-            return None
-        return FakeElement(self.dom_html)
-
     def content(self) -> str:
         return self._content
 
@@ -143,6 +127,7 @@ class FakeContext:
     def __init__(self, page: FakePage):
         self._page = page
         self.routes: list[tuple[str, Any]] = []
+        self.closed = False
 
     def route(self, pattern: str, handler: Any) -> None:
         self.routes.append((pattern, handler))
@@ -150,24 +135,50 @@ class FakeContext:
     def new_page(self) -> FakePage:
         return self._page
 
+    def close(self) -> None:
+        self.closed = True
+
 
 class FakeBrowser:
     def __init__(self, page: FakePage):
         self._page = page
         self.contexts_created = 0
-        self.closed = False
-
-    def new_context(self, **kwargs: Any) -> FakeContext:
-        self.contexts_created += 1
-        return FakeContext(self._page)
-
-    def close(self) -> None:
-        self.closed = True
 
 
-class ScenarioChromium:
-    """A chromium launcher that hands out one page per launch() call, in
-    order, so a test can script what happens attempt-by-attempt.
+def fake_new_context(browser: FakeBrowser, **kwargs: Any) -> FakeContext:
+    browser.contexts_created += 1
+    return FakeContext(browser._page)
+
+
+class FakeCamoufoxCM:
+    """The object returned by calling FakeCamoufoxFactory(...), mimicking
+    `Camoufox(...)` — a context manager whose __enter__ does the actual
+    "launch" (and so is where a missing-binary error would surface, same
+    as real Camoufox).
+    """
+
+    def __init__(self, factory: "FakeCamoufoxFactory", kwargs: dict[str, Any]):
+        self._factory = factory
+        self.kwargs = kwargs
+
+    def __enter__(self) -> FakeBrowser:
+        self._factory.launch_calls += 1
+        if self._factory.launch_raises is not None:
+            raise self._factory.launch_raises
+        page = self._factory._pages[self._factory.launch_calls - 1]
+        browser = FakeBrowser(page)
+        self._factory.browsers.append(browser)
+        return browser
+
+    def __exit__(self, *exc_info: Any) -> bool:
+        return False
+
+
+class FakeCamoufoxFactory:
+    """Replaces ScenarioChromium: hands out one page per __enter__() call,
+    in order, so a test can script what happens attempt-by-attempt. Called
+    with (headless=..., humanize=..., locale=...), exactly like the real
+    `Camoufox(...)` constructor.
     """
 
     def __init__(self, pages: list[FakePage] | None = None, launch_raises: Exception | None = None):
@@ -176,45 +187,33 @@ class ScenarioChromium:
         self.launch_calls = 0
         self.browsers: list[FakeBrowser] = []
 
-    def launch(self, **kwargs: Any) -> FakeBrowser:
-        self.launch_calls += 1
-        if self.launch_raises is not None:
-            raise self.launch_raises
-        page = self._pages[self.launch_calls - 1]
-        browser = FakeBrowser(page)
-        self.browsers.append(browser)
-        return browser
+    def __call__(self, **kwargs: Any) -> FakeCamoufoxCM:
+        return FakeCamoufoxCM(self, kwargs)
 
 
-class FakePlaywright:
-    def __init__(self, chromium: ScenarioChromium):
-        self.chromium = chromium
+def install_fake_camoufox(monkeypatch: pytest.MonkeyPatch, factory: FakeCamoufoxFactory) -> None:
+    """Monkeypatch camoufox.sync_api.Camoufox/NewContext.
 
-    def __enter__(self) -> "FakePlaywright":
-        return self
-
-    def __exit__(self, *exc_info: Any) -> bool:
-        return False
-
-
-def install_fake_playwright(monkeypatch: pytest.MonkeyPatch, chromium: ScenarioChromium) -> None:
-    """Monkeypatch playwright.sync_api.sync_playwright to hand out
-    FakePlaywright(chromium) every time it's called (once per attempt).
+    src.scraper imports these from inside _attempt_once/_launch_browser,
+    so patching the attributes on the camoufox.sync_api module (not on
+    src.scraper) is what actually takes effect — same reason the NRE-era
+    version of this file patched playwright.sync_api.sync_playwright.
     """
-    monkeypatch.setattr(
-        "playwright.sync_api.sync_playwright", lambda: FakePlaywright(chromium)
-    )
+    monkeypatch.setattr("camoufox.sync_api.Camoufox", factory)
+    monkeypatch.setattr("camoufox.sync_api.NewContext", fake_new_context)
 
 
 @pytest.fixture(autouse=True)
 def _set_route_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Override config with fixed test CRS codes, independent of whatever
-    real values config.ORIGIN_CRS/DESTINATION_CRS currently hold, so these
-    tests don't depend on (or break when someone updates) the real route
-    config.
+    """Override config with fixed test CRS codes/railcard, independent of
+    whatever real values config currently holds, so these tests don't
+    depend on (or break when someone updates) the real route config.
     """
     monkeypatch.setattr(scraper.config, "ORIGIN_CRS", "OXF")
     monkeypatch.setattr(scraper.config, "DESTINATION_CRS", "PAD")
+    monkeypatch.setattr(scraper.config, "RAILCARD_CODE", "YNG")
+    monkeypatch.setattr(scraper.config, "ANCHOR_OFFSET_MINUTES", 5)
+    monkeypatch.setattr(scraper.config, "TARGET_DEPARTURES", ("07:25", "07:30"))
 
 
 @pytest.fixture(autouse=True)
@@ -232,8 +231,7 @@ def _no_real_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
 @pytest.fixture(autouse=True)
 def _small_page_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     """Shrink the page budget so any test that never gets a captured
-    response or DOM result doesn't spend real wall-clock time in the
-    polling loop.
+    response doesn't spend real wall-clock time in the polling loop.
     """
     monkeypatch.setattr(scraper, "PAGE_BUDGET_SECONDS", 0.05)
 
@@ -244,20 +242,21 @@ def _small_page_budget(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_no_top_level_playwright_import():
-    """Playwright must only be imported lazily, inside functions, so that
-    `import src.scraper` never requires Playwright browsers to be present.
+    """Neither Playwright nor Camoufox may be imported at module level, so
+    that `import src.scraper` never requires a browser build to be present.
     """
     source = (REPO_ROOT / "src" / "scraper.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
+    banned_prefixes = ("playwright", "camoufox")
     for node in tree.body:  # module-level statements only
         if isinstance(node, ast.Import):
             for alias in node.names:
-                assert not alias.name.startswith("playwright"), (
-                    "found module-level `import playwright...`"
+                assert not alias.name.startswith(banned_prefixes), (
+                    f"found module-level `import {alias.name}`"
                 )
         if isinstance(node, ast.ImportFrom):
-            assert node.module is None or not node.module.startswith("playwright"), (
-                "found module-level `from playwright... import ...`"
+            assert node.module is None or not node.module.startswith(banned_prefixes), (
+                f"found module-level `from {node.module} import ...`"
             )
 
 
@@ -277,26 +276,34 @@ def test_import_succeeds_in_subprocess():
 
 
 def test_build_journey_planner_url_contains_expected_pieces():
-    url = scraper._build_journey_planner_url(date(2026, 9, 8))
-    assert "origin=OXF" in url
-    assert "destination=PAD" in url
-    # DDMMYY, NRE's own format (confirmed from a real example URL) — not ISO.
-    assert "leavingDate=080926" in url
-    # Anchored at the earliest target departure so one fetch covers both.
-    assert "leavingHour=07" in url
-    assert "leavingMin=25" in url
-    assert "railcards=" in url
+    url = scraper._build_journey_planner_url(date(2026, 12, 18))
+    assert "/OXF/PAD/2026-12-18T07:20" in url
+    assert "/YNGx1" in url
+    assert "leavingDate=" not in url
+
+
+def test_build_journey_planner_url_clamps_at_midnight_instead_of_rolling_date_back(monkeypatch):
+    # A target departure earlier than ANCHOR_OFFSET_MINUTES would, without
+    # the clamp, roll the anchor onto the previous day — silently querying
+    # the wrong travel date. Not reachable with today's 07:25/07:30
+    # targets, but must be handled anyway.
+    monkeypatch.setattr(scraper.config, "TARGET_DEPARTURES", ("00:02",))
+    monkeypatch.setattr(scraper.config, "ANCHOR_OFFSET_MINUTES", 5)
+
+    url = scraper._build_journey_planner_url(date(2026, 12, 18))
+
+    assert "/OXF/PAD/2026-12-18T00:00" in url
 
 
 @pytest.mark.parametrize(
     "status,url,content,expected",
     [
-        (403, NRE_JOURNEY_PLANNER_URL, "ok", True),
-        (500, NRE_JOURNEY_PLANNER_URL, "ok", True),
-        (200, NRE_JOURNEY_PLANNER_URL, "please solve this captcha challenge", True),
-        (200, NRE_JOURNEY_PLANNER_URL, "are you a robot?", True),
-        (200, NRE_JOURNEY_PLANNER_URL, "ok", False),
-        (None, NRE_JOURNEY_PLANNER_URL, "ok", False),
+        (403, TPE_JOURNEYS_GRID_URL, "ok", True),
+        (500, TPE_JOURNEYS_GRID_URL, "ok", True),
+        (200, TPE_JOURNEYS_GRID_URL, "please solve this captcha challenge", True),
+        (200, TPE_JOURNEYS_GRID_URL, "are you a robot?", True),
+        (200, TPE_JOURNEYS_GRID_URL, "ok", False),
+        (None, TPE_JOURNEYS_GRID_URL, "ok", False),
     ],
 )
 def test_looks_blocked(status, url, content, expected):
@@ -306,8 +313,10 @@ def test_looks_blocked(status, url, content, expected):
 @pytest.mark.parametrize(
     "current_url,expected",
     [
-        (NRE_JOURNEY_PLANNER_URL, False),
-        ("https://www.nationalrail.co.uk/some-other-page", False),
+        (TPE_JOURNEYS_GRID_URL, False),
+        ("https://ticket.tpexpress.co.uk/some-other-page", False),
+        ("https://www.tpexpress.co.uk/some-other-page", False),
+        (API_RESPONSE_URL, False),
         ("https://www.booking.com/searchresults.html?ss=London", True),
         ("", False),
     ],
@@ -317,24 +326,24 @@ def test_looks_hijacked(current_url, expected):
 
 
 # ---------------------------------------------------------------------------
-# Successful end-to-end flow (fake Playwright)
+# Successful end-to-end flow (fake Camoufox)
 # ---------------------------------------------------------------------------
 
 
-def _journey_planner_response(body: dict[str, Any]) -> FakeResponse:
+def _journey_plan_response(body: dict[str, Any]) -> FakeResponse:
     return FakeResponse(url=API_RESPONSE_URL, status=200, body=body)
 
 
 def test_successful_fetch_returns_captured_json_body(monkeypatch):
-    body = {"outwardJourneys": [{"timetable": {"scheduled": {"departure": "07:25"}}}]}
-    page = FakePage(responses=[_journey_planner_response(body)])
-    chromium = ScenarioChromium(pages=[page])
-    install_fake_playwright(monkeypatch, chromium)
+    body = {"links": {}, "result": {"outward": []}}
+    page = FakePage(responses=[_journey_plan_response(body)])
+    factory = FakeCamoufoxFactory(pages=[page])
+    install_fake_camoufox(monkeypatch, factory)
 
     result = scraper.fetch_journey_search(date(2026, 9, 8), attempts=1)
 
     assert result == body
-    assert chromium.launch_calls == 1
+    assert factory.launch_calls == 1
 
 
 def test_context_route_is_registered_before_new_page(monkeypatch):
@@ -342,37 +351,38 @@ def test_context_route_is_registered_before_new_page(monkeypatch):
     before new_page() is called, so it's active for the very first
     navigation.
     """
-    body = {"outwardJourneys": []}
-    page = FakePage(responses=[_journey_planner_response(body)])
-    chromium = ScenarioChromium(pages=[page])
-    install_fake_playwright(monkeypatch, chromium)
+    body = {"links": {}, "result": {"outward": []}}
+    page = FakePage(responses=[_journey_plan_response(body)])
+    factory = FakeCamoufoxFactory(pages=[page])
+    install_fake_camoufox(monkeypatch, factory)
 
     scraper.fetch_journey_search(date(2026, 9, 8), attempts=1)
 
-    browser = chromium.browsers[0]
+    browser = factory.browsers[0]
     assert browser.contexts_created == 1
 
 
 def test_sibling_endpoint_on_same_host_is_ignored_even_if_it_arrives_last(monkeypatch):
-    """Regression test for a real live failure: jpservices.nationalrail.co.uk
-    also serves sibling endpoints (e.g. "/fare-info") for other page data.
-    A same-host response handler matching on host alone would let this
-    later, unrelated response overwrite the real journey-search body,
-    producing a "successful" result with no outwardJourneys — exactly the
-    ParseError seen live. The handler must match the specific
-    "/journey-planner" path, regardless of arrival order.
+    """Regression test for a real live hazard: api.tpexpress.co.uk also
+    serves sibling endpoints (e.g. "/jp/plusbus") for other page data. A
+    same-host response handler matching on host alone would let this
+    later, unrelated response overwrite the real journey-plan body,
+    producing a "successful" result with no result.outward. The handler
+    must match the specific "/jp/journey-plan" path, regardless of
+    arrival order.
     """
-    body = {"outwardJourneys": [{"timetable": {"scheduled": {"departure": "07:25"}}}]}
+    body = {"links": {}, "result": {"outward": []}}
     sibling_response = FakeResponse(
-        url="https://jpservices.nationalrail.co.uk/fare-info", status=200, body={"unrelated": True}
+        url="https://api.tpexpress.co.uk/jp/plusbus", status=200, body={"unrelated": True}
     )
-    real_response = _journey_planner_response(body)
+    real_response = _journey_plan_response(body)
     # Sibling arrives AFTER the real response — this ordering is exactly
-    # what caused the live bug, since the old handler kept overwriting
-    # `captured` on every same-host response with no path check.
+    # what caused the live NRE bug this guards against, since a handler
+    # matching on host alone keeps overwriting `captured` on every
+    # same-host response with no path check.
     page = FakePage(responses=[real_response, sibling_response])
-    chromium = ScenarioChromium(pages=[page])
-    install_fake_playwright(monkeypatch, chromium)
+    factory = FakeCamoufoxFactory(pages=[page])
+    install_fake_camoufox(monkeypatch, factory)
 
     result = scraper.fetch_journey_search(date(2026, 9, 8), attempts=1)
 
@@ -381,10 +391,10 @@ def test_sibling_endpoint_on_same_host_is_ignored_even_if_it_arrives_last(monkey
 
 @pytest.mark.parametrize("banner_present", [True, False])
 def test_cookie_banner_present_or_absent_both_succeed(monkeypatch, banner_present):
-    body = {"outwardJourneys": []}
-    page = FakePage(responses=[_journey_planner_response(body)], banner_present=banner_present)
-    chromium = ScenarioChromium(pages=[page])
-    install_fake_playwright(monkeypatch, chromium)
+    body = {"links": {}, "result": {"outward": []}}
+    page = FakePage(responses=[_journey_plan_response(body)], banner_present=banner_present)
+    factory = FakeCamoufoxFactory(pages=[page])
+    install_fake_camoufox(monkeypatch, factory)
 
     result = scraper.fetch_journey_search(date(2026, 9, 8), attempts=1)
 
@@ -393,24 +403,14 @@ def test_cookie_banner_present_or_absent_both_succeed(monkeypatch, banner_presen
 
 
 # ---------------------------------------------------------------------------
-# DOM fallback
+# No response, no fallback
 # ---------------------------------------------------------------------------
 
 
-def test_dom_fallback_used_when_xhr_never_fires(monkeypatch):
-    page = FakePage(responses=[], dom_html="<div>some journeys</div>")
-    chromium = ScenarioChromium(pages=[page])
-    install_fake_playwright(monkeypatch, chromium)
-
-    result = scraper.fetch_journey_search(date(2026, 9, 8), attempts=1)
-
-    assert result == {"_source": "dom-fallback", "_raw_html": "<div>some journeys</div>"}
-
-
-def test_no_xhr_and_no_dom_raises_timeout_not_empty_success(monkeypatch):
-    page = FakePage(responses=[], dom_html=None)
-    chromium = ScenarioChromium(pages=[page])
-    install_fake_playwright(monkeypatch, chromium)
+def test_no_response_raises_timeout_not_empty_success(monkeypatch):
+    page = FakePage(responses=[])
+    factory = FakeCamoufoxFactory(pages=[page])
+    install_fake_camoufox(monkeypatch, factory)
 
     with pytest.raises(scraper.TimeoutScrapeError):
         scraper.fetch_journey_search(date(2026, 9, 8), attempts=1)
@@ -424,8 +424,8 @@ def test_no_xhr_and_no_dom_raises_timeout_not_empty_success(monkeypatch):
 def test_blocked_via_403_status_raises_blocked_error(monkeypatch):
     body_response = FakeResponse(url=API_RESPONSE_URL, status=403, body=None)
     page = FakePage(responses=[body_response])
-    chromium = ScenarioChromium(pages=[page])
-    install_fake_playwright(monkeypatch, chromium)
+    factory = FakeCamoufoxFactory(pages=[page])
+    install_fake_camoufox(monkeypatch, factory)
 
     with pytest.raises(scraper.BlockedError):
         scraper.fetch_journey_search(date(2026, 9, 8), attempts=1)
@@ -433,8 +433,8 @@ def test_blocked_via_403_status_raises_blocked_error(monkeypatch):
 
 def test_blocked_via_captcha_content_raises_blocked_error(monkeypatch):
     page = FakePage(responses=[], content="oops, a captcha challenge")
-    chromium = ScenarioChromium(pages=[page])
-    install_fake_playwright(monkeypatch, chromium)
+    factory = FakeCamoufoxFactory(pages=[page])
+    install_fake_camoufox(monkeypatch, factory)
 
     with pytest.raises(scraper.BlockedError):
         scraper.fetch_journey_search(date(2026, 9, 8), attempts=1)
@@ -443,35 +443,35 @@ def test_blocked_via_captcha_content_raises_blocked_error(monkeypatch):
 def test_blocked_error_retried_at_most_once(monkeypatch, _no_real_sleep):
     blocked_response = FakeResponse(url=API_RESPONSE_URL, status=403, body=None)
     pages = [FakePage(responses=[blocked_response]) for _ in range(3)]
-    chromium = ScenarioChromium(pages=pages)
-    install_fake_playwright(monkeypatch, chromium)
+    factory = FakeCamoufoxFactory(pages=pages)
+    install_fake_camoufox(monkeypatch, factory)
 
     with pytest.raises(scraper.BlockedError):
         scraper.fetch_journey_search(date(2026, 9, 8), attempts=3)
 
     # Blocked twice (initial + one retry), never a third time even though
     # attempts=3 would otherwise allow it.
-    assert chromium.launch_calls == 2
+    assert factory.launch_calls == 2
     assert _no_real_sleep == [5]
 
 
 def test_hijacked_raises_and_is_retried_at_most_once(monkeypatch, _no_real_sleep):
-    """A page that ends up off nationalrail.co.uk entirely (the ad-hijack
-    behaviour described in scraper's docstring, never observed via the
-    deep-link approach but guarded against) must raise HijackedError and
-    back off exactly like a block, not be treated as "no results".
+    """A page that ends up off tpexpress.co.uk entirely (never observed on
+    TPE, but guarded against — see HijackedError's docstring) must raise
+    HijackedError and back off exactly like a block, not be treated as "no
+    results".
     """
     pages = [
         FakePage(responses=[], url="https://www.booking.com/searchresults.html")
         for _ in range(3)
     ]
-    chromium = ScenarioChromium(pages=pages)
-    install_fake_playwright(monkeypatch, chromium)
+    factory = FakeCamoufoxFactory(pages=pages)
+    install_fake_camoufox(monkeypatch, factory)
 
     with pytest.raises(scraper.HijackedError):
         scraper.fetch_journey_search(date(2026, 9, 8), attempts=3)
 
-    assert chromium.launch_calls == 2
+    assert factory.launch_calls == 2
     assert _no_real_sleep == [5]
 
 
@@ -481,52 +481,52 @@ def test_hijacked_raises_and_is_retried_at_most_once(monkeypatch, _no_real_sleep
 
 
 def test_retry_backoff_and_fresh_context_each_attempt(monkeypatch, _no_real_sleep):
-    ok_body = {"outwardJourneys": [{"timetable": {"scheduled": {"departure": "07:25"}}}]}
-    failing_page_1 = FakePage(responses=[], dom_html=None)  # -> TimeoutScrapeError
-    failing_page_2 = FakePage(responses=[], dom_html=None)  # -> TimeoutScrapeError
-    succeeding_page = FakePage(responses=[_journey_planner_response(ok_body)])
-    chromium = ScenarioChromium(pages=[failing_page_1, failing_page_2, succeeding_page])
-    install_fake_playwright(monkeypatch, chromium)
+    ok_body = {"links": {}, "result": {"outward": []}}
+    failing_page_1 = FakePage(responses=[])  # -> TimeoutScrapeError
+    failing_page_2 = FakePage(responses=[])  # -> TimeoutScrapeError
+    succeeding_page = FakePage(responses=[_journey_plan_response(ok_body)])
+    factory = FakeCamoufoxFactory(pages=[failing_page_1, failing_page_2, succeeding_page])
+    install_fake_camoufox(monkeypatch, factory)
 
     result = scraper.fetch_journey_search(date(2026, 9, 8), attempts=3)
 
     assert result == ok_body
-    assert chromium.launch_calls == 3  # a fresh browser (and context) each attempt
-    for browser in chromium.browsers:
+    assert factory.launch_calls == 3  # a fresh browser (and context) each attempt
+    for browser in factory.browsers:
         assert browser.contexts_created == 1
     assert _no_real_sleep == [5, 10]
 
 
 def test_all_attempts_failing_raises_after_backoff(monkeypatch, _no_real_sleep):
-    pages = [FakePage(responses=[], dom_html=None) for _ in range(3)]
-    chromium = ScenarioChromium(pages=pages)
-    install_fake_playwright(monkeypatch, chromium)
+    pages = [FakePage(responses=[]) for _ in range(3)]
+    factory = FakeCamoufoxFactory(pages=pages)
+    install_fake_camoufox(monkeypatch, factory)
 
     with pytest.raises(scraper.TimeoutScrapeError):
         scraper.fetch_journey_search(date(2026, 9, 8), attempts=3)
 
-    assert chromium.launch_calls == 3
+    assert factory.launch_calls == 3
     assert _no_real_sleep == [5, 10]
 
 
 # ---------------------------------------------------------------------------
-# Chromium binary missing
+# Camoufox binary missing
 # ---------------------------------------------------------------------------
 
 
-def test_missing_chromium_binary_gives_actionable_message(monkeypatch, _no_real_sleep):
-    launch_error = PlaywrightError(
-        "Executable doesn't exist at /root/.cache/ms-playwright/chromium-1234/chrome\n"
-        "Looks like Playwright was just installed. Please run:\n\n"
-        "    playwright install\n"
+def test_missing_camoufox_binary_gives_actionable_message(monkeypatch, _no_real_sleep):
+    launch_error = RuntimeError(
+        "Executable doesn't exist at /root/.cache/camoufox/camoufox-1234/camoufox\n"
+        "Looks like Camoufox was just installed. Please run:\n\n"
+        "    python -m camoufox fetch\n"
     )
-    chromium = ScenarioChromium(pages=[], launch_raises=launch_error)
-    install_fake_playwright(monkeypatch, chromium)
+    factory = FakeCamoufoxFactory(pages=[], launch_raises=launch_error)
+    install_fake_camoufox(monkeypatch, factory)
 
     with pytest.raises(scraper.ScraperError) as exc_info:
         scraper.fetch_journey_search(date(2026, 9, 8), attempts=1)
 
-    assert "playwright install chromium" in str(exc_info.value)
+    assert "python -m camoufox fetch" in str(exc_info.value)
 
 
 # ---------------------------------------------------------------------------
@@ -535,12 +535,12 @@ def test_missing_chromium_binary_gives_actionable_message(monkeypatch, _no_real_
 
 
 def test_slow_network_hits_hard_page_budget(monkeypatch):
-    # No responses ever arrive and there's no DOM fallback: the polling
-    # loop in _wait_for_result must give up once PAGE_BUDGET_SECONDS (set
-    # tiny by the autouse fixture) elapses, not hang forever.
-    page = FakePage(responses=[], dom_html=None)
-    chromium = ScenarioChromium(pages=[page])
-    install_fake_playwright(monkeypatch, chromium)
+    # No response ever arrives: the polling loop in _wait_for_result must
+    # give up once PAGE_BUDGET_SECONDS (set tiny by the autouse fixture)
+    # elapses, not hang forever.
+    page = FakePage(responses=[])
+    factory = FakeCamoufoxFactory(pages=[page])
+    install_fake_camoufox(monkeypatch, factory)
 
     with pytest.raises(scraper.TimeoutScrapeError):
         scraper.fetch_journey_search(date(2026, 9, 8), attempts=1)
@@ -553,8 +553,8 @@ def test_slow_network_hits_hard_page_budget(monkeypatch):
 
 def test_navigation_timeout_raises_timeout_scrape_error(monkeypatch):
     page = FakePage(goto_raises=PlaywrightTimeoutError("Timeout 45000ms exceeded"))
-    chromium = ScenarioChromium(pages=[page])
-    install_fake_playwright(monkeypatch, chromium)
+    factory = FakeCamoufoxFactory(pages=[page])
+    install_fake_camoufox(monkeypatch, factory)
 
     with pytest.raises(scraper.TimeoutScrapeError):
         scraper.fetch_journey_search(date(2026, 9, 8), attempts=1)
@@ -567,9 +567,9 @@ def test_navigation_timeout_raises_timeout_scrape_error(monkeypatch):
 
 def test_final_failure_writes_artifacts_before_raising(monkeypatch, tmp_path):
     partly_captured = FakeResponse(url=API_RESPONSE_URL, status=200, body=None, bad_json=True)
-    page = FakePage(responses=[partly_captured], dom_html=None, content="<html>no luck</html>")
-    chromium = ScenarioChromium(pages=[page])
-    install_fake_playwright(monkeypatch, chromium)
+    page = FakePage(responses=[partly_captured], content="<html>no luck</html>")
+    factory = FakeCamoufoxFactory(pages=[page])
+    install_fake_camoufox(monkeypatch, factory)
 
     artifacts_dir = tmp_path / "artifacts"
     travel_date = date(2026, 9, 8)
@@ -591,9 +591,9 @@ def test_final_failure_writes_artifacts_before_raising(monkeypatch, tmp_path):
 
 
 def test_no_artifacts_written_when_artifacts_dir_is_none(monkeypatch):
-    page = FakePage(responses=[], dom_html=None)
-    chromium = ScenarioChromium(pages=[page])
-    install_fake_playwright(monkeypatch, chromium)
+    page = FakePage(responses=[])
+    factory = FakeCamoufoxFactory(pages=[page])
+    install_fake_camoufox(monkeypatch, factory)
 
     # Should simply raise, with no filesystem side effects and no crash
     # from a missing artifacts_dir.

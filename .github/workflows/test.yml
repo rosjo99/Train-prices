@@ -1,8 +1,8 @@
 name: Tests
 
-# Runs the unit test suite on every push/PR — no secrets, no Playwright
-# browsers needed, since src.scraper's tests all mock Playwright's sync
-# API rather than launching a real browser (see tests/test_scraper.py).
+# Runs the unit test suite on every push/PR — no secrets, no Camoufox
+# browser needed, since src.scraper's tests all mock Camoufox's sync API
+# rather than launching a real browser (see tests/test_scraper.py).
 
 on:
   push:
