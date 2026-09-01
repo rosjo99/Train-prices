@@ -14,3 +14,7 @@ For each review:
    (especially around credentials and scraping)
 3. Verify edge cases from the plan are handled
 4. Report findings organized by severity
+
+Keep the report terse: cite file:line and quote only the specific lines
+a finding is about — never paste back a whole file, function, or diff
+the caller can already read.
