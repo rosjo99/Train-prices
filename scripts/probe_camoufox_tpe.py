@@ -1,4 +1,4 @@
-"""One-off diagnostic: can Camoufox reach buy.crosscountrytrains.co.uk?
+"""Diagnostic: can Camoufox reach buy.crosscountrytrains.co.uk?
 
 Not part of the price-check pipeline. Run only via the
 probe-camoufox-crosscountry workflow_dispatch workflow. See
@@ -17,12 +17,10 @@ from pathlib import Path
 from camoufox.sync_api import Camoufox
 
 DEEP_LINK = (
-    "https://buy.crosscountrytrains.co.uk/search?origin=GBOXF&destination=GBQQP"
-    "&adults=1&children=0&outboundTime=2026-12-18T07:00:00&outboundTimeType=DEPARTURE"
-    "&railcards=%5B%7B%22Code%22:%22UK_YOUTH%22,%22Number%22:1,%22Type%22:%22DISCOUNT_CARD%22%7D%5D"
-    "&ls=LS_1_4&p=PRICE_P_1_159"
+    "https://ticket.tpexpress.co.uk/journeys-grid/OXF/PAD/2026-12-18T07:00//1//YNGx1?departNow=no"
+    "&realTime=no&searchPreferences=%2C%2C%2C%2Ctrue&showAdditionalRoutes=no&showCheapest=no&tocSpecific=no"
 )
-HOMEPAGE = "https://www.crosscountrytrains.co.uk/"
+HOMEPAGE = "https://www.tpexpress.co.uk/"
 
 BLOCK_MARKERS = (
     "captcha",
