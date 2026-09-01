@@ -43,19 +43,24 @@ got here.
   safe until proven otherwise. Confirmed so far: Trainline itself
   (DataDome, 403 + CAPTCHA); CrossCountry
   (`buy.crosscountrytrains.co.uk`, Cloudflare bot management); East
-  Midlands Railway, London Northwestern Railway, and Northern
-  (`buytickets.<operator>.co.uk` — all three are the same Trainline
-  white-label deployment, confirmed via identical webpack bundle
-  hashes, so inherit Trainline's DataDome protection — any other
-  operator on this same `buytickets.<operator>.co.uk` shape can be
-  assumed the same without a full re-investigation, see
+  Midlands Railway, London Northwestern Railway, Northern, and West
+  Midlands Railway (`buytickets.<operator>.co.uk` — all four are the
+  same Trainline white-label deployment, confirmed via identical
+  webpack bundle hashes, so inherit Trainline's DataDome protection —
+  any other operator on this same `buytickets.<operator>.co.uk` shape
+  can be assumed the same without a full re-investigation, see
   `docs/plans/001-train-price-alert.md` §1.7's closing note for the
   quick `curl`-only check); and TransPennine Express
   (`ticket.tpexpress.co.uk`) — a genuinely different booking engine
   with no DataDome/Cloudflare markers in its static HTML, still blocked
-  by an unidentified connection-level bot check. NRE has no bot
-  protection at all (confirmed via 20+ live probe runs). See
-  `docs/plans/001-train-price-alert.md` §1.4/§1.5/§1.6/§1.7/§1.8/§1.9/§2.2.
+  by an unidentified connection-level bot check (confirmed
+  browser-agnostic, not Chromium- or headless-specific — Firefox and
+  headed Chromium were also blocked, see §1.9's follow-up; likely a
+  TLS/HTTP2 fingerprint on Playwright's bundled browser builds, not
+  something fixable without stealth tooling this project already rules
+  out). NRE has no bot protection at all (confirmed via 20+ live probe
+  runs). See `docs/plans/001-train-price-alert.md`
+  §1.4/§1.5/§1.6/§1.7/§1.8/§1.9/§1.10/§2.2.
 - **Scraping approach:** Playwright (sync API), headless Chromium,
   navigating straight to a fully-parameterised deep-link URL —
   `https://www.nationalrail.co.uk/journey-planner/?type=single&origin=OXF&destination=PAD&leavingType=departing&leavingDate=DDMMYY&leavingHour=HH&leavingMin=MM&adults=1&railcards=YNG%7C1&extraTime=0`

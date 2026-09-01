@@ -340,6 +340,19 @@ handshake) — squarely the kind of stealth tooling CLAUDE.md's standing
 rules out, not a new gap to close. NRE remains the only viable
 retailer.
 
+### 1.10 West Midlands Railway checked (2026-09-01) and rejected via the §1.7 shortcut
+
+West Midlands Railway's booking site
+(`buytickets.westmidlandsrailway.co.uk`) also accepts the same
+deep-link shape. Applying §1.7's shortcut: a `curl` of the deep-link
+(HTTP 200) shows `data-test="app-WestMidlandsRailwayWeb-WestMidlandsRailway"`
+and the same `js.datadome.co`/`static.trainlinecontent.com` references
+and identical webpack bundle hashes
+(`app.010e8419aad13e9266b2.mjs`, `runtime~app.c126f6b8ef1209832b95.mjs`)
+as EMR's, LNR's, and Northern's pages. Same shared Trainline
+white-label deployment, rejected without a separate live
+headless-browser probe. NRE remains the only viable retailer.
+
 ---
 
 ## 2. Decisions not already in CLAUDE.md
