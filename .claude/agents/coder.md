@@ -14,3 +14,5 @@ Rules:
 - Write tests alongside implementation when the plan calls for them.
 - Keep commits atomic — one logical change per commit.
 - Read existing code before writing to match style and conventions.
+- Report back concisely: a short summary of what changed and file:line
+  pointers, not full file contents or a restated diff.
