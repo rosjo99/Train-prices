@@ -452,7 +452,7 @@ def test_blocked_error_retried_at_most_once(monkeypatch, _no_real_sleep):
     # Blocked twice (initial + one retry), never a third time even though
     # attempts=3 would otherwise allow it.
     assert chromium.launch_calls == 2
-    assert _no_real_sleep == [30]
+    assert _no_real_sleep == [10]
 
 
 def test_hijacked_raises_and_is_retried_at_most_once(monkeypatch, _no_real_sleep):
@@ -472,7 +472,7 @@ def test_hijacked_raises_and_is_retried_at_most_once(monkeypatch, _no_real_sleep
         scraper.fetch_journey_search(date(2026, 9, 8), attempts=3)
 
     assert chromium.launch_calls == 2
-    assert _no_real_sleep == [30]
+    assert _no_real_sleep == [10]
 
 
 # ---------------------------------------------------------------------------
@@ -494,7 +494,7 @@ def test_retry_backoff_and_fresh_context_each_attempt(monkeypatch, _no_real_slee
     assert chromium.launch_calls == 3  # a fresh browser (and context) each attempt
     for browser in chromium.browsers:
         assert browser.contexts_created == 1
-    assert _no_real_sleep == [30, 90]
+    assert _no_real_sleep == [10, 20]
 
 
 def test_all_attempts_failing_raises_after_backoff(monkeypatch, _no_real_sleep):
@@ -506,7 +506,7 @@ def test_all_attempts_failing_raises_after_backoff(monkeypatch, _no_real_sleep):
         scraper.fetch_journey_search(date(2026, 9, 8), attempts=3)
 
     assert chromium.launch_calls == 3
-    assert _no_real_sleep == [30, 90]
+    assert _no_real_sleep == [10, 20]
 
 
 # ---------------------------------------------------------------------------

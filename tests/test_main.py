@@ -66,7 +66,14 @@ def _raw(*journeys: dict) -> dict:
 
 def _install_fake_scraper(monkeypatch: pytest.MonkeyPatch, results_by_date: dict) -> list[date]:
     """results_by_date maps date -> raw dict (success) or Exception instance
-    (raised). Returns the list of dates actually fetched, in call order.
+    (raised). Returns the list of dates actually fetched.
+
+    main() now scrapes up to main.PARALLEL_DATES dates concurrently within
+    each batch (see src/main.py), so within a single batch this list's
+    order is not guaranteed — list.append is thread-safe (the GIL makes
+    it atomic), but which worker thread runs first isn't. Tests that care
+    about ordering only rely on it ACROSS batches (batch N+1 is never
+    dispatched until batch N has fully finished), never within one.
     """
     calls: list[date] = []
 
@@ -94,11 +101,6 @@ def _install_fake_notifier(monkeypatch: pytest.MonkeyPatch, raise_exc: Exception
 
 
 @pytest.fixture(autouse=True)
-def _no_real_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(main.time, "sleep", lambda seconds: None)
-
-
-@pytest.fixture(autouse=True)
 def _fixed_secrets(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(main.config, "get_secrets", lambda: FAKE_SECRETS)
 
@@ -113,15 +115,6 @@ def _empty_booked_dates(tmp_path, monkeypatch: pytest.MonkeyPatch):
 @pytest.fixture(autouse=True)
 def _no_max_dates(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(main.config, "MAX_DATES", None)
-
-
-@pytest.fixture(autouse=True)
-def _skip_time_gate_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Every existing test here is exercising something other than the
-    # RUN_HOUR_LONDON gate — bypass it by default so tests aren't flaky
-    # depending on the wall-clock hour they happen to run at. The gate
-    # itself gets its own dedicated tests below with this turned off.
-    monkeypatch.setattr(main.config, "SKIP_TIME_GATE", True)
 
 
 @pytest.fixture(autouse=True)
@@ -261,7 +254,10 @@ def test_scraper_fails_on_one_date_others_still_checked(monkeypatch):
     result = main.main(today=TERM_TIME_DAY)
 
     assert result == 0
-    assert fetch_calls == [d1, d2, d3]
+    # All three are within one concurrent batch (main.PARALLEL_DATES=5),
+    # so intra-batch order isn't guaranteed — only that every one of them
+    # got attempted.
+    assert set(fetch_calls) == {d1, d2, d3}
 
 
 def test_scraper_fails_on_every_date_returns_1_no_email(monkeypatch):
@@ -308,7 +304,10 @@ def test_five_consecutive_failed_dates_stops_early(monkeypatch):
     result = main.main(today=TERM_TIME_DAY)
 
     assert result == 1
-    assert fetch_calls == [d1, d2, d3, d4, d5]
+    # d1-d5 are exactly one concurrent batch (main.PARALLEL_DATES=5), so
+    # they're all dispatched together — order isn't guaranteed, but d6
+    # (the next batch) must never be attempted at all.
+    assert set(fetch_calls) == {d1, d2, d3, d4, d5}
     assert send_calls == []
 
 
@@ -336,7 +335,12 @@ def test_a_success_between_failures_resets_the_consecutive_count(monkeypatch):
     result = main.main(today=TERM_TIME_DAY)
 
     assert result == 0
-    assert fetch_calls == dates
+    # Every candidate date must be attempted (never stops early) — batches
+    # of main.PARALLEL_DATES=5 are dispatched strictly in sequence, so
+    # every date in the first batch precedes every date in the second,
+    # but order *within* a batch isn't guaranteed.
+    assert set(fetch_calls[:5]) == set(dates[:5])
+    assert set(fetch_calls[5:]) == set(dates[5:])
 
 
 def test_five_consecutive_parse_failures_also_stops_early(monkeypatch):
@@ -378,30 +382,49 @@ def test_five_consecutive_parse_failures_also_stops_early(monkeypatch):
     assert result == 1
 
 
-def test_blocked_error_on_first_date_aborts_immediately(monkeypatch):
-    d1, d2 = date(2026, 9, 8), date(2026, 9, 10)
-    fetch_calls = _install_fake_scraper(
-        monkeypatch, {d1: scraper.BlockedError("blocked"), d2: _raw()}
-    )
-    monkeypatch.setattr(main.config, "MAX_DATES", 2)
+def _seven_dates() -> list[date]:
+    return [
+        date(2026, 9, 8),
+        date(2026, 9, 10),
+        date(2026, 9, 11),
+        date(2026, 9, 15),
+        date(2026, 9, 17),
+        date(2026, 9, 18),  # in the 2nd batch — must never be attempted
+        date(2026, 9, 22),  # in the 2nd batch — must never be attempted
+    ]
+
+
+def test_blocked_error_aborts_before_the_next_batch(monkeypatch):
+    # Dates 0-4 are one concurrent batch (main.PARALLEL_DATES=5): since
+    # they're dispatched together, some of d1's batch-mates may still get
+    # fetched even though d1 comes back blocked — that's an accepted cost
+    # of running dates concurrently. What must never happen is the run
+    # going on to schedule the SECOND batch at all.
+    dates = _seven_dates()
+    results_by_date = {d: _raw() for d in dates}
+    results_by_date[dates[0]] = scraper.BlockedError("blocked")
+    fetch_calls = _install_fake_scraper(monkeypatch, results_by_date)
+    monkeypatch.setattr(main.config, "MAX_DATES", len(dates))
 
     result = main.main(today=TERM_TIME_DAY)
 
     assert result == 1
-    assert fetch_calls == [d1]  # never reached d2
+    assert dates[5] not in fetch_calls
+    assert dates[6] not in fetch_calls
 
 
-def test_hijacked_error_aborts_immediately_like_blocked(monkeypatch):
-    d1, d2 = date(2026, 9, 8), date(2026, 9, 10)
-    fetch_calls = _install_fake_scraper(
-        monkeypatch, {d1: scraper.HijackedError("hijacked"), d2: _raw()}
-    )
-    monkeypatch.setattr(main.config, "MAX_DATES", 2)
+def test_hijacked_error_aborts_before_the_next_batch(monkeypatch):
+    dates = _seven_dates()
+    results_by_date = {d: _raw() for d in dates}
+    results_by_date[dates[0]] = scraper.HijackedError("hijacked")
+    fetch_calls = _install_fake_scraper(monkeypatch, results_by_date)
+    monkeypatch.setattr(main.config, "MAX_DATES", len(dates))
 
     result = main.main(today=TERM_TIME_DAY)
 
     assert result == 1
-    assert fetch_calls == [d1]
+    assert dates[5] not in fetch_calls
+    assert dates[6] not in fetch_calls
 
 
 # ---------------------------------------------------------------------------
@@ -453,34 +476,42 @@ def test_notifier_raises_returns_1(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
-def test_booked_date_excluded_scraper_never_called_for_it(monkeypatch, _empty_booked_dates):
-    tomorrow = TERM_TIME_DAY + datetime_module.timedelta(days=1)
-    _empty_booked_dates.write_text(f"{tomorrow.isoformat()}\n", encoding="utf-8")
-    other_date = date(2026, 9, 10)
-    fetch_calls = _install_fake_scraper(monkeypatch, {other_date: _raw()})
+def test_booked_date_is_scraped_and_logged_but_never_alerted(
+    monkeypatch, _empty_booked_dates, _isolated_price_log
+):
+    # A booked date must still be scraped and appended to price-history.csv
+    # (so the website's price column keeps updating for it) — only
+    # ALERTING is suppressed for it. Priced well under threshold, so this
+    # would alert if the date weren't booked.
+    booked_date = TERM_TIME_DAY + datetime_module.timedelta(days=1)
+    _empty_booked_dates.write_text(f"{booked_date.isoformat()}\n", encoding="utf-8")
+    raw = _raw(_journey(booked_date, "07:25", "08:26", Decimal("5.00")))
+    fetch_calls = _install_fake_scraper(monkeypatch, {booked_date: raw})
+    send_calls = _install_fake_notifier(monkeypatch)
     monkeypatch.setattr(main.config, "MAX_DATES", 1)
 
     result = main.main(today=TERM_TIME_DAY)
 
     assert result == 0
-    assert tomorrow not in fetch_calls
-    assert fetch_calls == [other_date]
+    assert fetch_calls == [booked_date]
+    assert send_calls == []
+    assert booked_date.isoformat() in _isolated_price_log.read_text(encoding="utf-8")
 
 
-def test_all_candidates_booked_returns_0_scraper_never_called(monkeypatch, _empty_booked_dates):
+def test_all_candidates_booked_still_scraped_but_no_alert(monkeypatch, _empty_booked_dates):
     all_candidates = main.term_dates.checkable_dates(
         TERM_TIME_DAY + datetime_module.timedelta(days=1), main.term_dates.LAST_KNOWN_DATE
     )
     _empty_booked_dates.write_text(
         "\n".join(d.isoformat() for d in all_candidates), encoding="utf-8"
     )
-    fetch_calls = _install_fake_scraper(monkeypatch, {})
+    fetch_calls = _install_fake_scraper(monkeypatch, {d: _raw() for d in all_candidates})
     send_calls = _install_fake_notifier(monkeypatch)
 
     result = main.main(today=TERM_TIME_DAY)
 
     assert result == 0
-    assert fetch_calls == []
+    assert set(fetch_calls) == set(all_candidates)
     assert send_calls == []
 
 
@@ -616,52 +647,6 @@ def test_evaluate_alerts_even_when_railcard_unconfirmed():
 
     assert len(matches) == 1
     assert matches[0].option.railcard_applied is False
-
-
-# ---------------------------------------------------------------------------
-# RUN_HOUR_LONDON time gate (8pm British time)
-# ---------------------------------------------------------------------------
-
-
-def _london_at(hour: int, minute: int = 0) -> datetime_module.datetime:
-    return datetime_module.datetime(2026, 9, 7, hour, minute, tzinfo=config.LONDON)
-
-
-def test_wrong_hour_is_a_noop_scraper_never_called(monkeypatch):
-    monkeypatch.setattr(main.config, "SKIP_TIME_GATE", False)
-    fetch_calls = _install_fake_scraper(monkeypatch, {})
-
-    result = main.main(today=TERM_TIME_DAY, now=_london_at(19, 0))
-
-    assert result == 0
-    assert fetch_calls == []
-
-
-def test_correct_hour_runs_normally(monkeypatch):
-    monkeypatch.setattr(main.config, "SKIP_TIME_GATE", False)
-    travel_date = date(2026, 9, 8)
-    fetch_calls = _install_fake_scraper(monkeypatch, {travel_date: _raw()})
-    monkeypatch.setattr(main.config, "MAX_DATES", 1)
-
-    result = main.main(today=TERM_TIME_DAY, now=_london_at(config.RUN_HOUR_LONDON, 0))
-
-    assert result == 0
-    assert fetch_calls == [travel_date]
-
-
-def test_skip_time_gate_bypasses_wrong_hour(monkeypatch):
-    # SKIP_TIME_GATE is already True via the autouse fixture, but assert
-    # it explicitly here since this is the behaviour that fixture exists
-    # to provide for every other test in this file.
-    monkeypatch.setattr(main.config, "SKIP_TIME_GATE", True)
-    travel_date = date(2026, 9, 8)
-    fetch_calls = _install_fake_scraper(monkeypatch, {travel_date: _raw()})
-    monkeypatch.setattr(main.config, "MAX_DATES", 1)
-
-    result = main.main(today=TERM_TIME_DAY, now=_london_at(3, 0))
-
-    assert result == 0
-    assert fetch_calls == [travel_date]
 
 
 # ---------------------------------------------------------------------------

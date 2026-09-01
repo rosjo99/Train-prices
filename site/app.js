@@ -185,6 +185,35 @@ function latestPriceByDateAndTarget(rows) {
   return latest;
 }
 
+// Python's `datetime.now(timezone.utc).isoformat()` (see src/price_log.py)
+// writes checked_at as "YYYY-MM-DDTHH:MM:SS.ffffff+00:00" — 6-digit
+// microseconds, which some JS engines fail to parse via `new Date()`.
+// Trimming to millisecond precision first keeps this reliably parseable.
+function parseCheckedAt(iso) {
+  if (!iso) return null;
+  const trimmed = iso.replace(/(\.\d{3})\d*/, "$1");
+  const d = new Date(trimmed);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function formatLastUpdated(iso) {
+  const d = parseCheckedAt(iso);
+  if (!d) return null;
+  return d.toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
+}
+
+// The single most recent checked_at across every row — i.e. when the
+// price-check job last actually ran and wrote a result, regardless of
+// which date/target it was for. Plain string comparison is safe here
+// since checked_at is always this fixed-width ISO 8601 format.
+function latestCheckedAt(rows) {
+  let latest = "";
+  for (const row of rows) {
+    if (row.checked_at > latest) latest = row.checked_at;
+  }
+  return latest;
+}
+
 function formatLatestCell(row) {
   if (!row) return "–";
   if (row.sold_out === "True") return "sold out";
@@ -496,9 +525,17 @@ async function loadAndRender() {
     ]);
 
     const { dates: bookedSet } = parseBookedContent(bookedContent);
-    const latestByDate = priceHistoryText
-      ? latestPriceByDateAndTarget(parseCsv(priceHistoryText))
-      : {};
+    const priceRows = priceHistoryText ? parseCsv(priceHistoryText) : [];
+    const latestByDate = latestPriceByDateAndTarget(priceRows);
+
+    const pricesUpdatedEl = document.getElementById("prices-updated");
+    if (pricesUpdatedEl) {
+      const formatted = formatLastUpdated(latestCheckedAt(priceRows));
+      pricesUpdatedEl.textContent = formatted
+        ? `Prices last updated: ${formatted} (your local time).`
+        : "Prices last updated: never — no successful run yet.";
+    }
+
     const start = addDaysISO(todayLocalISO(), 1);
     const dates = checkableDates(start, termsResponse.last_known_date, termsResponse);
 
@@ -515,6 +552,8 @@ async function loadAndRender() {
   } catch (err) {
     console.error(err);
     showStatus(`Could not load dates: ${err.message || err}`, "error");
+    const pricesUpdatedEl = document.getElementById("prices-updated");
+    if (pricesUpdatedEl) pricesUpdatedEl.textContent = "";
   }
 }
 
