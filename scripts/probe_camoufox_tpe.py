@@ -1,7 +1,34 @@
-"""Diagnostic: can a stealth Playwright browser reach TPE pages?
-Much slower, proxy-aware, fixed UA per proxy, human-like interactions,
-and extra fingerprint spoofing.
+```python
+"""Diagnostic: can Camoufox reach TPE pages?
+
+This probe intentionally uses Camoufox rather than Playwright Chromium.
+
+It records:
+- final URL and title
+- HTTP response status distribution
+- visible body text
+- page HTML
+- screenshot
+- likely API/XHR responses
+- block/challenge markers with surrounding context
+- basic browser fingerprint information
+- whether the page appears to contain actual journey content
+
+Usage:
+
+    python scripts/probe_camoufox_tpe.py --out-dir /tmp/camoufox-probe
+
+Optional:
+
+    python scripts/probe_camoufox_tpe.py \
+        --out-dir /tmp/camoufox-probe \
+        --headed
+
+    python scripts/probe_camoufox_tpe.py \
+        --out-dir /tmp/camoufox-probe \
+        --proxy "http://user:pass@host:port"
 """
+
 from __future__ import annotations
 
 import argparse
@@ -11,57 +38,80 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
-from playwright.sync_api import sync_playwright, Browser, BrowserContext, Page
+from camoufox.sync_api import Camoufox, NewContext
+from playwright.sync_api import Browser, BrowserContext, Page
+
 
 # ---------------------------------------------------------------------------
-# Configuration – edit these
+# Configuration
 # ---------------------------------------------------------------------------
 
-# Add as many residential / mobile proxies as you want.
-# Format: "http://user:pass@host:port" or "socks5://..."
 PROXIES = [
-    # "http://user:pass@1.2.3.4:8000",
-    # "http://user:pass@5.6.7.8:8000",
-    # ...
+    # "http://user:pass@host:port",
+    # "socks5://user:pass@host:port",
 ]
 
-# Fixed User-Agent ↔ Proxy pairing (never rotate UA for the same proxy)
-PROXY_UA_MAP: dict[str, str] = {
-    # "http://user:pass@1.2.3.4:8000": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
-    # "http://user:pass@5.6.7.8:8000": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+# Keep a fixed browser configuration per proxy if desired.
+#
+# IMPORTANT:
+# Do not put a Chrome User-Agent here. Camoufox is Firefox-based and
+# generates a consistent Firefox fingerprint. The key is to keep the same
+# proxy -> configuration pairing rather than pretending to be Chrome.
+PROXY_CONFIG_MAP: dict[str, dict[str, Any]] = {
+    # "http://user:pass@host:port": {
+    #     "os": "windows",
+    # },
 }
 
-# Fallback UA when no proxy is used
-DEFAULT_UA = (
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) "
-    "Chrome/128.0.0.0 Safari/537.36"
-)
-
 DEEP_LINK = (
-    "https://ticket.tpexpress.co.uk/journeys-grid/OXF/PAD/2026-12-18T07:00//1//YNGx1"
+    "https://ticket.tpexpress.co.uk/"
+    "journeys-grid/OXF/PAD/2026-12-18T07:00//1//YNGx1"
     "?departNow=no&realTime=no&searchPreferences=%2C%2C%2C%2Ctrue"
     "&showAdditionalRoutes=no&showCheapest=no&tocSpecific=no"
 )
+
 HOMEPAGE = "https://www.tpexpress.co.uk/"
 
-BLOCK_MARKERS = (
-    "captcha",
+# These are deliberately separated from ordinary page text such as
+# JavaScript source containing the word "captcha".
+STRONG_BLOCK_MARKERS = (
     "are you a robot",
     "access denied",
     "sorry, you have been blocked",
     "attention required",
     "just a moment",
-    "datadome",
     "cf-browser-verification",
     "challenge-platform",
+    "enable javascript and cookies to continue",
+    "verify you are human",
+    "checking your browser",
 )
 
-# How slow we want to be (seconds)
-MIN_DELAY = 4.0
-MAX_DELAY = 11.0
-PAGE_LOAD_TIMEOUT = 60_000  # ms
+WEAK_MARKERS = (
+    "captcha",
+    "datadome",
+)
+
+# Words that are useful evidence that the journey page actually rendered
+# meaningful application content.
+JOURNEY_MARKERS = (
+    "oxford",
+    "paddington",
+    "depart",
+    "arrive",
+    "journey",
+    "ticket",
+    "adult",
+    "return",
+    "single",
+    "£",
+)
+
+MIN_DELAY = 3.0
+MAX_DELAY = 8.0
+PAGE_LOAD_TIMEOUT = 60_000
 
 
 # ---------------------------------------------------------------------------
@@ -72,252 +122,534 @@ def human_delay(min_s: float = MIN_DELAY, max_s: float = MAX_DELAY) -> None:
     time.sleep(random.uniform(min_s, max_s))
 
 
-def random_mouse_move(page: Page, steps: int = 12) -> None:
-    """Move the mouse in a slightly jittery path across the viewport."""
-    viewport = page.viewport_size or {"width": 1280, "height": 720}
-    x, y = random.randint(100, 400), random.randint(100, 400)
+def random_mouse_move(page: Page, steps: int = 8) -> None:
+    """Make a small amount of normal cursor movement."""
+    viewport = page.viewport_size or {"width": 1366, "height": 768}
+
+    x = random.randint(100, min(400, viewport["width"] - 20))
+    y = random.randint(100, min(400, viewport["height"] - 20))
 
     for _ in range(steps):
-        x += random.randint(-80, 120)
-        y += random.randint(-60, 90)
+        x += random.randint(-60, 100)
+        y += random.randint(-40, 70)
+
         x = max(10, min(viewport["width"] - 10, x))
         y = max(10, min(viewport["height"] - 10, y))
+
         page.mouse.move(x, y)
-        time.sleep(random.uniform(0.04, 0.18))
+        time.sleep(random.uniform(0.05, 0.15))
 
 
-def human_hover_and_scroll(page: Page) -> None:
-    """A few realistic interactions before / after load."""
-    random_mouse_move(page)
-    human_delay(1.5, 3.5)
+def human_interaction(page: Page) -> None:
+    """A small amount of normal interaction after navigation."""
+    try:
+        random_mouse_move(page)
 
-    # Hover somewhere in the middle
-    viewport = page.viewport_size or {"width": 1280, "height": 720}
-    page.mouse.move(
-        viewport["width"] // 2 + random.randint(-100, 100),
-        viewport["height"] // 3 + random.randint(-50, 50),
-    )
-    time.sleep(random.uniform(0.6, 1.8))
+        human_delay(0.8, 2.0)
 
-    # Small scroll
-    page.mouse.wheel(0, random.randint(200, 600))
-    human_delay(1.0, 2.5)
+        viewport = page.viewport_size or {"width": 1366, "height": 768}
 
-    random_mouse_move(page, steps=8)
+        page.mouse.move(
+            viewport["width"] // 2 + random.randint(-80, 80),
+            viewport["height"] // 3 + random.randint(-40, 40),
+        )
 
+        time.sleep(random.uniform(0.5, 1.2))
 
-def apply_stealth_and_fingerprint(context: BrowserContext, user_agent: str) -> None:
-    """Inject the most common stealth + fingerprint patches."""
+        page.mouse.wheel(0, random.randint(150, 450))
 
-    # 1. Basic stealth init script (Playwright equivalent of puppeteer-stealth)
-    context.add_init_script(
-        """
-        // Pass the Webdriver test
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+        human_delay(0.8, 2.0)
 
-        // Fake plugins / mimeTypes length
-        Object.defineProperty(navigator, 'plugins', {
-            get: () => [1, 2, 3, 4, 5],
-        });
-        Object.defineProperty(navigator, 'languages', {
-            get: () => ['en-GB', 'en-US', 'en'],
-        });
-
-        // Chrome runtime
-        window.chrome = { runtime: {} };
-
-        // Permissions
-        const originalQuery = window.navigator.permissions.query;
-        window.navigator.permissions.query = (parameters) => (
-            parameters.name === 'notifications'
-                ? Promise.resolve({ state: Notification.permission })
-                : originalQuery(parameters)
-        );
-        """
-    )
-
-    # 2. WebGL / Canvas / Audio fingerprint noise
-    context.add_init_script(
-        """
-        // WebGL vendor/renderer spoof
-        const getParameter = WebGLRenderingContext.prototype.getParameter;
-        WebGLRenderingContext.prototype.getParameter = function(parameter) {
-            if (parameter === 37445) return 'Intel Inc.';           // UNMASKED_VENDOR_WEBGL
-            if (parameter === 37446) return 'Intel Iris OpenGL Engine'; // UNMASKED_RENDERER_WEBGL
-            return getParameter.call(this, parameter);
-        };
-
-        // Canvas noise
-        const toBlob = HTMLCanvasElement.prototype.toBlob;
-        const toDataURL = HTMLCanvasElement.prototype.toDataURL;
-        const getImageData = CanvasRenderingContext2D.prototype.getImageData;
-
-        function noise(canvas) {
-            const ctx = canvas.getContext('2d');
-            if (!ctx) return;
-            const imageData = getImageData.call(ctx, 0, 0, canvas.width, canvas.height);
-            for (let i = 0; i < imageData.data.length; i += 4) {
-                imageData.data[i]     ^= (Math.random() * 2) | 0;
-                imageData.data[i + 1] ^= (Math.random() * 2) | 0;
-            }
-            ctx.putImageData(imageData, 0, 0);
-        }
-
-        HTMLCanvasElement.prototype.toBlob = function(...args) {
-            noise(this);
-            return toBlob.apply(this, args);
-        };
-        HTMLCanvasElement.prototype.toDataURL = function(...args) {
-            noise(this);
-            return toDataURL.apply(this, args);
-        };
-
-        // AudioContext fingerprint
-        const originalGetChannelData = AudioBuffer.prototype.getChannelData;
-        AudioBuffer.prototype.getChannelData = function() {
-            const results = originalGetChannelData.apply(this, arguments);
-            for (let i = 0; i < results.length; i += 100) {
-                results[i] = results[i] + Math.random() * 0.0001;
-            }
-            return results;
-        };
-        """
-    )
-
-    # 3. Force consistent User-Agent + extra headers
-    context.set_extra_http_headers({
-        "Accept-Language": "en-GB,en-US;q=0.9,en;q=0.8",
-        "Sec-Ch-Ua": '"Chromium";v="128", "Not;A=Brand";v="24", "Google Chrome";v="128"',
-        "Sec-Ch-Ua-Mobile": "?0",
-        "Sec-Ch-Ua-Platform": '"Windows"',
-    })
+    except Exception as exc:
+        print(f"[warn] Interaction failed: {exc}", file=sys.stderr)
 
 
-def create_context(
-    browser: Browser,
-    proxy: str | None = None,
-    user_agent: str = DEFAULT_UA,
-) -> BrowserContext:
-    kwargs: dict[str, Any] = {
-        "user_agent": user_agent,
-        "viewport": {"width": 1366, "height": 768},
-        "locale": "en-GB",
-        "timezone_id": "Europe/London",
-        "geolocation": {"latitude": 51.5074, "longitude": -0.1278},  # London
-        "permissions": ["geolocation"],
-        "color_scheme": "light",
-        "device_scale_factor": 1,
-        "is_mobile": False,
-        "has_touch": False,
-        "java_script_enabled": True,
+def parse_proxy(proxy_url: str) -> dict[str, str]:
+    """Convert a proxy URL into Playwright's proxy dictionary."""
+    parsed = urlparse(proxy_url)
+
+    if not parsed.scheme or not parsed.hostname:
+        raise ValueError(f"Invalid proxy URL: {proxy_url!r}")
+
+    if not parsed.port:
+        raise ValueError(f"Proxy URL has no port: {proxy_url!r}")
+
+    result = {
+        "server": f"{parsed.scheme}://{parsed.hostname}:{parsed.port}",
     }
 
-    if proxy:
-        kwargs["proxy"] = {"server": proxy}
+    if parsed.username:
+        result["username"] = parsed.username
 
-    context = browser.new_context(**kwargs)
-    apply_stealth_and_fingerprint(context, user_agent)
-    return context
+    if parsed.password:
+        result["password"] = parsed.password
 
-
-# ---------------------------------------------------------------------------
-# Probe logic
-# ---------------------------------------------------------------------------
-
-def probe(context: BrowserContext, url: str, label: str, out_dir: Path) -> dict:
-    page = context.new_page()
-    responses: list[dict] = []
-
-    page.on("response", lambda r: responses.append({"status": r.status, "url": r.url}))
-
-    result: dict[str, Any] = {"label": label, "url": url}
-
-    try:
-        # Slow, human-like navigation
-        human_delay(2.0, 5.0)
-        page.goto(url, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT)
-
-        # Let the page settle + do fake interactions
-        human_delay(3.0, 7.0)
-        human_hover_and_scroll(page)
-        human_delay(4.0, 9.0)
-
-        result["final_url"] = page.url
-        result["title"] = page.title()
-        content = page.content()
-        result["content_length"] = len(content)
-
-        lowered = content.lower()
-        result["block_markers_found"] = [m for m in BLOCK_MARKERS if m in lowered]
-
-        (out_dir / f"{label}.html").write_text(content, encoding="utf-8")
-        page.screenshot(path=str(out_dir / f"{label}.png"), full_page=True)
-
-        result["ok"] = True
-    except Exception as exc:
-        result["ok"] = False
-        result["error"] = str(exc)
-
-    result["responses_sample"] = responses[:25]
-    page.close()
     return result
 
 
+def marker_contexts(text: str, markers: tuple[str, ...]) -> list[dict[str, str]]:
+    """Return useful snippets around detected markers."""
+    lowered = text.lower()
+    results: list[dict[str, str]] = []
+
+    for marker in markers:
+        start = 0
+
+        while True:
+            pos = lowered.find(marker, start)
+            if pos == -1:
+                break
+
+            left = max(0, pos - 250)
+            right = min(len(text), pos + len(marker) + 500)
+
+            results.append(
+                {
+                    "marker": marker,
+                    "snippet": text[left:right].replace("\n", " ")[:750],
+                }
+            )
+
+            start = pos + len(marker)
+
+            # Avoid making the diagnostic enormous if a script contains
+            # hundreds of harmless references to "captcha".
+            if len(results) >= 20:
+                return results
+
+    return results
+
+
+def summarise_responses(responses: list[dict[str, Any]]) -> dict[str, Any]:
+    status_counts: dict[str, int] = {}
+
+    for response in responses:
+        key = str(response["status"])
+        status_counts[key] = status_counts.get(key, 0) + 1
+
+    interesting = []
+
+    for response in responses:
+        url = response["url"].lower()
+
+        if (
+            response["status"] >= 400
+            or any(
+                token in url
+                for token in (
+                    "/api/",
+                    "graphql",
+                    "journey",
+                    "search",
+                    "availability",
+                    "booking",
+                    "fare",
+                    "ajax",
+                )
+            )
+        ):
+            interesting.append(response)
+
+    return {
+        "total_responses": len(responses),
+        "status_counts": status_counts,
+        "interesting_responses": interesting[:100],
+    }
+
+
+def get_browser_fingerprint(page: Page) -> dict[str, Any]:
+    """Collect browser-visible values for the diagnostic artifact."""
+    try:
+        return page.evaluate(
+            """
+            () => ({
+                userAgent: navigator.userAgent,
+                platform: navigator.platform,
+                language: navigator.language,
+                languages: Array.from(navigator.languages || []),
+                webdriver: navigator.webdriver,
+                hardwareConcurrency: navigator.hardwareConcurrency,
+                deviceMemory: navigator.deviceMemory ?? null,
+                maxTouchPoints: navigator.maxTouchPoints,
+                screen: {
+                    width: screen.width,
+                    height: screen.height,
+                    availWidth: screen.availWidth,
+                    availHeight: screen.availHeight,
+                    colorDepth: screen.colorDepth,
+                    pixelDepth: screen.pixelDepth
+                },
+                timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+                viewport: {
+                    width: window.innerWidth,
+                    height: window.innerHeight,
+                    devicePixelRatio: window.devicePixelRatio
+                }
+            })
+            """
+        )
+    except Exception as exc:
+        return {"error": str(exc)}
+
+
+def page_assessment(
+    *,
+    title: str,
+    visible_text: str,
+    final_url: str,
+    responses: list[dict[str, Any]],
+) -> dict[str, Any]:
+    lowered = visible_text.lower()
+
+    strong_hits = [
+        marker
+        for marker in STRONG_BLOCK_MARKERS
+        if marker in lowered
+    ]
+
+    weak_hits = [
+        marker
+        for marker in WEAK_MARKERS
+        if marker in lowered
+    ]
+
+    journey_hits = [
+        marker
+        for marker in JOURNEY_MARKERS
+        if marker in lowered
+    ]
+
+    error_statuses = sorted(
+        {
+            response["status"]
+            for response in responses
+            if response["status"] >= 400
+        }
+    )
+
+    # A single occurrence of "captcha" is not considered a block.
+    #
+    # We only classify the page as blocked when there is stronger evidence:
+    # an explicit challenge/block phrase or a substantial number of HTTP
+    # errors with no meaningful journey content.
+    if strong_hits:
+        classification = "challenge_or_block"
+    elif not journey_hits and error_statuses:
+        classification = "possible_http_failure"
+    elif journey_hits:
+        classification = "page_loaded"
+    else:
+        classification = "loaded_but_unclear"
+
+    return {
+        "classification": classification,
+        "final_url": final_url,
+        "title": title,
+        "journey_marker_hits": journey_hits,
+        "strong_block_markers": strong_hits,
+        "weak_markers": weak_hits,
+        "http_error_statuses": error_statuses,
+        "looks_like_journey_content": len(journey_hits) >= 3,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Probe
+# ---------------------------------------------------------------------------
+
+def probe(
+    context: BrowserContext,
+    url: str,
+    label: str,
+    out_dir: Path,
+) -> dict[str, Any]:
+    page = context.new_page()
+
+    responses: list[dict[str, Any]] = []
+
+    def on_response(response: Any) -> None:
+        try:
+            responses.append(
+                {
+                    "status": response.status,
+                    "method": response.request.method,
+                    "resource_type": response.request.resource_type,
+                    "url": response.url,
+                }
+            )
+        except Exception:
+            pass
+
+    page.on("response", on_response)
+
+    result: dict[str, Any] = {
+        "label": label,
+        "url": url,
+    }
+
+    try:
+        print(f"[info] Navigating {label}: {url}")
+
+        human_delay(1.5, 3.0)
+
+        response = page.goto(
+            url,
+            wait_until="domcontentloaded",
+            timeout=PAGE_LOAD_TIMEOUT,
+        )
+
+        result["initial_http_status"] = response.status if response else None
+
+        # Give the site's JS application time to render.
+        human_delay(4.0, 7.0)
+
+        human_interaction(page)
+
+        # Allow any XHR/fetch calls triggered by the page to settle.
+        human_delay(3.0, 6.0)
+
+        result["final_url"] = page.url
+        result["title"] = page.title()
+
+        html = page.content()
+
+        try:
+            visible_text = page.locator("body").inner_text(timeout=10)
+        except Exception:
+            visible_text = ""
+
+        result["content_length"] = len(html)
+        result["visible_text_length"] = len(visible_text)
+        result["visible_text_preview"] = visible_text[:5000]
+
+        result["fingerprint"] = get_browser_fingerprint(page)
+
+        result["response_summary"] = summarise_responses(responses)
+
+        result["strong_marker_contexts"] = marker_contexts(
+            visible_text,
+            STRONG_BLOCK_MARKERS,
+        )
+
+        result["weak_marker_contexts"] = marker_contexts(
+            visible_text,
+            WEAK_MARKERS,
+        )
+
+        result["assessment"] = page_assessment(
+            title=result["title"],
+            visible_text=visible_text,
+            final_url=result["final_url"],
+            responses=responses,
+        )
+
+        # Save artifacts regardless of whether the page appears blocked.
+        (out_dir / f"{label}.html").write_text(
+            html,
+            encoding="utf-8",
+        )
+
+        (out_dir / f"{label}.txt").write_text(
+            visible_text,
+            encoding="utf-8",
+        )
+
+        page.screenshot(
+            path=str(out_dir / f"{label}.png"),
+            full_page=True,
+        )
+
+        (out_dir / f"{label}-responses.json").write_text(
+            json.dumps(responses, indent=2),
+            encoding="utf-8",
+        )
+
+        result["ok"] = True
+
+        print(
+            f"[info] {label}: "
+            f"{result['assessment']['classification']}; "
+            f"title={result['title']!r}; "
+            f"status={result['initial_http_status']}"
+        )
+
+    except Exception as exc:
+        result["ok"] = False
+        result["error"] = repr(exc)
+
+        try:
+            page.screenshot(
+                path=str(out_dir / f"{label}-error.png"),
+                full_page=True,
+            )
+        except Exception:
+            pass
+
+        print(
+            f"[error] {label}: {exc}",
+            file=sys.stderr,
+        )
+
+    finally:
+        result["responses"] = responses
+        page.close()
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--out-dir", default="/tmp/stealth-tpe-probe")
-    parser.add_argument("--headed", action="store_true", help="Run with visible browser")
-    parser.add_argument("--proxy", help="Force a single proxy (overrides pool)")
+
+    parser.add_argument(
+        "--out-dir",
+        default="/tmp/camoufox-probe",
+    )
+
+    parser.add_argument(
+        "--headed",
+        action="store_true",
+        help="Run with a visible browser window.",
+    )
+
+    parser.add_argument(
+        "--proxy",
+        help="Use one proxy instead of the configured proxy pool.",
+    )
+
     args = parser.parse_args()
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    results = []
+    if args.proxy:
+        proxy_url = args.proxy
+    elif PROXIES:
+        proxy_url = random.choice(PROXIES)
+    else:
+        proxy_url = None
 
-    with sync_playwright() as p:
-        # Launch options
-        launch_kwargs = {
+    proxy_config = None
+    camoufox_config: dict[str, Any] = {}
+
+    if proxy_url:
+        proxy_config = parse_proxy(proxy_url)
+        camoufox_config.update(
+            PROXY_CONFIG_MAP.get(proxy_url, {})
+        )
+
+    # Camoufox is Firefox-based. Let Camoufox generate a coherent
+    # fingerprint rather than injecting Chrome-specific navigator/WebGL
+    # patches after the fact.
+    #
+    # geoip=True is particularly important when a proxy is supplied:
+    # Camoufox can derive location/timezone information from the proxy exit IP.
+    camoufox_config.update(
+        {
             "headless": not args.headed,
-            "args": [
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-infobars",
-                "--window-size=1366,768",
-            ],
+            "humanize": True,
+            "geoip": bool(proxy_config),
+            "locale": "en-GB,en-US,en",
+            "os": camoufox_config.get("os", "windows"),
+        }
+    )
+
+    if proxy_config:
+        camoufox_config["proxy"] = proxy_config
+
+    print(
+        "[info] Browser=Camoufox "
+        f"proxy={proxy_url or 'none'} "
+        f"config={camoufox_config}"
+    )
+
+    results: list[dict[str, Any]] = []
+
+    try:
+        with Camoufox(**camoufox_config) as browser:
+            # NewContext is Camoufox's fingerprint-aware context creator.
+            # It generates a coherent browser identity instead of relying
+            # on the manual webdriver/canvas/WebGL patches used previously.
+            context = NewContext(
+                browser,
+                os=camoufox_config.get("os"),
+                locale="en-GB,en-US,en",
+                timezone_id="Europe/London"
+                if not proxy_config
+                else None,
+                viewport={
+                    "width": 1366,
+                    "height": 768,
+                },
+                color_scheme="light",
+                java_script_enabled=True,
+            )
+
+            try:
+                results.append(
+                    probe(
+                        context,
+                        HOMEPAGE,
+                        "homepage",
+                        out_dir,
+                    )
+                )
+
+                human_delay(5.0, 10.0)
+
+                results.append(
+                    probe(
+                        context,
+                        DEEP_LINK,
+                        "deep-link",
+                        out_dir,
+                    )
+                )
+
+            finally:
+                context.close()
+
+    except Exception as exc:
+        error = {
+            "ok": False,
+            "stage": "camoufox_launch",
+            "error": repr(exc),
         }
 
-        browser = p.chromium.launch(**launch_kwargs)
+        results.append(error)
 
-        # Decide which proxy / UA pair to use
-        if args.proxy:
-            proxy = args.proxy
-            ua = PROXY_UA_MAP.get(proxy, DEFAULT_UA)
-        elif PROXIES:
-            proxy = random.choice(PROXIES)
-            ua = PROXY_UA_MAP.get(proxy, DEFAULT_UA)
-        else:
-            proxy = None
-            ua = DEFAULT_UA
+        (out_dir / "launch-error.json").write_text(
+            json.dumps(error, indent=2),
+            encoding="utf-8",
+        )
 
-        print(f"[info] Using proxy={proxy or 'none'}  UA={ua[:60]}...")
+        print(
+            f"[error] Camoufox launch failed: {exc}",
+            file=sys.stderr,
+        )
 
-        context = create_context(browser, proxy=proxy, user_agent=ua)
+    summary = {
+        "browser": "Camoufox",
+        "proxy": proxy_url or None,
+        "results": results,
+    }
 
-        try:
-            results.append(probe(context, HOMEPAGE, "homepage", out_dir))
-            human_delay(8.0, 15.0)  # long pause between the two pages
-            results.append(probe(context, DEEP_LINK, "deep-link", out_dir))
-        finally:
-            context.close()
-            browser.close()
+    (out_dir / "summary.json").write_text(
+        json.dumps(summary, indent=2),
+        encoding="utf-8",
+    )
 
-    summary_path = out_dir / "summary.json"
-    summary_path.write_text(json.dumps(results, indent=2), encoding="utf-8")
-    print(json.dumps(results, indent=2))
+    print(json.dumps(summary, indent=2))
+
+    # Keep the GitHub Actions step successful so that the artifacts can
+    # always be inspected, even when the diagnostic itself found a block.
     return 0
 
 
 if __name__ == "__main__":
     sys.exit(main())
+```
+
