@@ -437,6 +437,24 @@ Same DataDome-behind-Cloudflare configuration, challenging plain `curl`
 outright rather than only automated browsers. NRE remains the only
 viable retailer.
 
+### 1.15 Omio investigated (2026-09-01) and rejected — blocked outright, Cloudflare interactive challenge
+
+Omio (`www.omio.co.uk`, deep-link shape
+`https://www.omio.co.uk/app/search-frontend/results/<searchId>/train?locale=en-GB&origin_domain=co.uk`)
+— a major European multi-modal travel metasearch site — is rejected
+the same way as §1.12/§1.14 (Rail Europe, Klook): `curl` alone
+settles it, no browser probe needed. `curl` against the deep-link gets
+HTTP 403, 3/3 attempts, `server: cloudflare`, `cf-mitigated: challenge`,
+and a body titled "Just a moment..." with a CSP allowing
+`challenges.cloudflare.com` — Cloudflare's interactive JS
+challenge/Turnstile page, not the static "Attention Required" block
+page §1.5's CrossCountry got. A third distinct block *presentation*
+(DataDome CAPTCHA for Rail Europe/Klook, Cloudflare's interactive
+challenge here, Cloudflare's static block for CrossCountry) but the
+same practical outcome: rejected before any real page content loads,
+confirmed without needing a browser at all. NRE remains the only
+viable retailer.
+
 ---
 
 ## 2. Decisions not already in CLAUDE.md
