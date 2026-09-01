@@ -58,16 +58,19 @@ USER_AGENT = (
 # Overall per-attempt budget: how long we'll wait, after navigation, for
 # either the journey-planner XHR to fire or the results DOM to render.
 # Monkeypatch this module attribute in tests instead of actually waiting.
-PAGE_BUDGET_SECONDS: float = 45.0
+# Every probe run's XHR arrived within a few seconds, so 20s already
+# leaves generous headroom over the observed happy path while roughly
+# halving the worst-case per-attempt wait versus the original 45s.
+PAGE_BUDGET_SECONDS: float = 20.0
 
 # How long to pause the polling loop between checks, in milliseconds,
 # passed to Page.wait_for_timeout (a no-op wait in fake pages used by
 # tests, so this doesn't slow tests down).
-POLL_INTERVAL_MS = 500
+POLL_INTERVAL_MS = 250
 
 # Retry backoff, in seconds, indexed by (attempt number - 1), clamped to
 # the last entry for any further attempts.
-RETRY_BACKOFF_SECONDS: tuple[int, ...] = (30, 90)
+RETRY_BACKOFF_SECONDS: tuple[int, ...] = (10, 20)
 
 # Defense-in-depth block markers, checked against page URL/content. NRE
 # itself has never shown any of these (confirmed "none" on every probe

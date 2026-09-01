@@ -27,7 +27,9 @@ ORIGIN_NAME = "Oxford"
 DESTINATION_NAME = "London Paddington"
 
 # National Rail Enquiries CRS (station) codes. Confirmed live on
-# 2026-08-31 via scripts/probe_nre_deeplink.py: navigating to
+# 2026-08-31 via a one-off probe script (since deleted as dead research
+# code once its findings were implemented here — see git history if
+# needed): navigating to
 # JOURNEY_PLANNER_URL_TEMPLATE below with these two codes returned a
 # results page showing "Oxford to London Paddington" and real journeys
 # (see JOURNEY_PLANNER_API_HOST's comment for the fare evidence).
@@ -40,8 +42,10 @@ TARGET_DEPARTURES: tuple[str, ...] = ("07:25", "07:30")
 
 PRICE_THRESHOLD = Decimal("10.00")
 
-# Confirmed live on 2026-08-31 via scripts/probe_nre_deeplink.py: passing
-# railcards=YNG|1 in the deep-link URL produced a real fare response whose
+# Confirmed live on 2026-08-31 via a one-off probe script (since deleted
+# as dead research code once its findings were implemented here — see
+# git history if needed): passing railcards=YNG|1 in the deep-link URL
+# produced a real fare response whose
 # jpservices.nationalrail.co.uk/journey-planner JSON contained, per fare,
 # a "railcardFares" array entry with "code": "YNG" and a discounted
 # "prices.adult" distinct from that fare's own "undiscountedPrices" — e.g.
@@ -54,8 +58,10 @@ PRICE_THRESHOLD = Decimal("10.00")
 # for NRE too — a coincidence, not carried-over evidence.
 RAILCARD_CODE = "YNG"
 
-# Confirmed live on 2026-08-31 via scripts/probe_nre_deeplink.py: this
-# exact query-string shape, with the CRS codes/railcard code above
+# Confirmed live on 2026-08-31 via a one-off probe script (since deleted
+# as dead research code once its findings were implemented here — see
+# git history if needed): this exact query-string shape, with the CRS
+# codes/railcard code above
 # substituted in, loaded straight into a real results page — no click
 # needed — showing "07:25 journey from Oxford to London Paddington" and
 # "07:30 journey from Oxford to London Paddington" each priced at
@@ -135,17 +141,6 @@ BOOKED_DATES_PATH = Path("booked-dates.txt")
 # each run (see .github/workflows/price-check.yml).
 PRICE_LOG_PATH = Path("price-history.csv")
 
-# --- Scheduling ------------------------------------------------------
-
-# GitHub Actions cron is UTC-only and doesn't know about BST/GMT, so the
-# workflow schedules two cron lines (one for each) and this is the
-# Python-side gate that makes only the one that's actually 8pm in
-# Europe/London right now do real work — the same "all timing/gating
-# logic lives in Python, never in the cron expression" principle already
-# used for weekday/term gating. See docs/plans/001-train-price-alert.md
-# Task 7's "Running at a fixed local time" section.
-RUN_HOUR_LONDON = 20
-
 
 def _read_max_dates() -> int | None:
     # Empty/absent means uncapped (e.g. a local shell run with MAX_DATES
@@ -180,19 +175,11 @@ def _read_bool_env(name: str) -> bool:
 # the scheduled cron run.
 MAX_DATES: int | None = _read_max_dates()
 
-# Both of these are set automatically by price-check.yml purely from
+# Set automatically by price-check.yml purely from
 # `github.event_name == 'workflow_dispatch'` — there's no separate user
-# toggle for either, deliberately, per explicit request for one single
-# "run it manually" test rather than a grid of dry_run/skip-the-gate/
-# send-a-fake-email checkboxes to pick a combination from. They stay two
-# separate internal flags (not one) only because they answer genuinely
-# different questions and collapsing them would make ordinary tests of
-# one behaviour accidentally exercise the other.
+# toggle, deliberately, per explicit request for one single "run it
+# manually" test rather than a checkbox to pick a combination from.
 #
-# SKIP_TIME_GATE bypasses RUN_HOUR_LONDON, so a manual run never has to
-# wait for real 8pm London to do something.
-SKIP_TIME_GATE: bool = _read_bool_env("SKIP_TIME_GATE")
-
 # TEST_RUN makes main() always send a genuine email through the real
 # notifier using REAL scraped data — if nothing is actually below
 # threshold, it reports the cheapest real fare found instead of staying

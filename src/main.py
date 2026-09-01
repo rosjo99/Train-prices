@@ -1,18 +1,18 @@
 """Orchestrates a full daily price-check run: enumerate candidate travel
-dates, scrape and parse each one, decide whether any fare beats the
-alert threshold, and send a real email if so (or, in TEST_RUN, always
-send something real so a manual run exercises the full pipeline).
+dates, scrape and parse each one (several at once), decide whether any
+non-booked fare beats the alert threshold, and send a real email if so
+(or, in TEST_RUN, always send something real so a manual run exercises
+the full pipeline).
 
 See docs/plans/001-train-price-alert.md Task 6 for the full spec this
-implements, and Task 7 for TEST_RUN and the RUN_HOUR_LONDON time gate.
+implements, and Task 7 for TEST_RUN.
 """
 
 from __future__ import annotations
 
 import logging
-import random
 import sys
-import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -26,18 +26,25 @@ logger = logging.getLogger(__name__)
 # workflow, which uploads this directory only if the job fails.
 ARTIFACTS_DIR = Path("artifacts")
 
-# Randomised pause between consecutive date checks, in seconds — mild
-# pacing against a site with no bot protection to trip (see CLAUDE.md),
-# not an evasion measure.
-PAUSE_BETWEEN_DATES_SECONDS = (5, 15)
+# How many travel dates are scraped concurrently, each getting its own
+# browser. NRE has no bot protection to trip (see CLAUDE.md), so this is
+# purely a wall-clock lever, not politeness pacing — picked to comfortably
+# fit a GitHub-hosted runner's CPU/memory running that many headless
+# Chromium instances at once.
+PARALLEL_DATES = 5
 
 # National Rail Enquiries only releases fares up to ~12 weeks ahead —
 # candidate dates beyond that horizon fail every time (scrape or parse
 # error), not just occasionally, since there's simply no fare data yet.
-# Once this many dates in a row fail, stop attempting any further
-# candidates rather than spending the full per-date retry budget on
-# every remaining date of the school year. A run that succeeds on some
-# dates and then hits this cutoff still alerts on whatever it found.
+# Once this many dates in a row fail, stop scheduling any further batches
+# rather than spending the full per-date retry budget on every remaining
+# date of the school year. Dates are grouped into concurrent batches of
+# PARALLEL_DATES (see main()), so this is now checked once per batch in
+# original-date order rather than after every single date — a batch that
+# straddles the threshold can attempt up to PARALLEL_DATES-1 dates beyond
+# it before the run notices, a small, accepted cost of running dates in
+# parallel. A run that succeeds on some dates and then hits this cutoff
+# still alerts on whatever it found.
 MAX_CONSECUTIVE_FAILURES = 5
 
 
@@ -56,6 +63,25 @@ def _ensure_logging_configured() -> None:
         )
 
 
+def _fetch_and_parse_one(
+    travel_date: date,
+) -> dict[str, TrainOption | None] | Exception:
+    """Runs in a worker thread: one full scrape + parse for a single
+    travel date. Returns the outcome instead of raising/returning, so a
+    whole concurrent batch's results can be gathered and then processed,
+    in original date order, after every worker in it has finished.
+    """
+    try:
+        raw = scraper.fetch_journey_search(travel_date, artifacts_dir=ARTIFACTS_DIR)
+    except scraper.ScraperError as exc:
+        return exc
+    try:
+        options = parser.parse_journeys(raw, travel_date)
+    except parser.ParseError as exc:
+        return exc
+    return parser.select_target_trains(options, config.TARGET_DEPARTURES)
+
+
 def evaluate(
     targets_by_date: dict[date, dict[str, TrainOption | None]],
 ) -> list[AlertMatch]:
@@ -69,7 +95,9 @@ def evaluate(
     — carried through to the CSV log and the email — and no longer gates
     whether a price counts, per explicit decision: alert on any
     unbooked fare under threshold, confirmed discount or not (see
-    src/parser.py's module docstring).
+    src/parser.py's module docstring). Booked dates are filtered out by
+    the caller before this ever sees them — see main()'s
+    `alertable_results`.
     """
     matches: list[AlertMatch] = []
     seen: set[tuple[date, str]] = set()
@@ -139,51 +167,32 @@ def _log_target_summary(travel_date: date, targets: dict[str, TrainOption | None
             logger.info("[%s] %s: %s", travel_date.isoformat(), departure_time, option.price)
 
 
-def main(today: date | None = None, now: datetime | None = None) -> int:
-    """`now` is the current Europe/London-aware instant, used only for
-    RUN_HOUR_LONDON's time-of-day gate — kept separate from `today` (a
-    plain date) so tests can freeze one without the other. Both default
-    to the real clock.
-    """
+def main(today: date | None = None) -> int:
     _ensure_logging_configured()
 
-    if now is None:
-        now = datetime.now(config.LONDON)
     if today is None:
-        today = now.date()
+        today = datetime.now(config.LONDON).date()
 
-    if not config.SKIP_TIME_GATE and now.astimezone(config.LONDON).hour != config.RUN_HOUR_LONDON:
-        logger.info(
-            "current Europe/London time is %s, not %02d:xx — this cron "
-            "slot isn't real 8pm London today (see the dual-cron-line "
-            "design in docs/plans/001-train-price-alert.md Task 7), "
-            "no-op",
-            now.astimezone(config.LONDON).strftime("%H:%M"),
-            config.RUN_HOUR_LONDON,
-        )
-        return 0
-
-    all_candidates = term_dates.checkable_dates(today + timedelta(days=1), term_dates.LAST_KNOWN_DATE)
+    candidates = term_dates.checkable_dates(today + timedelta(days=1), term_dates.LAST_KNOWN_DATE)
     booked = booked_dates.load_booked_dates(config.BOOKED_DATES_PATH)
-    candidates = [d for d in all_candidates if d not in booked]
-
-    skipped = [d for d in all_candidates if d in booked]
-    if skipped:
-        logger.info(
-            "skipping %d already-booked date(s): %s",
-            len(skipped),
-            ", ".join(d.isoformat() for d in skipped),
-        )
 
     if config.MAX_DATES is not None:
         candidates = candidates[: config.MAX_DATES]
 
     if not candidates:
-        if all_candidates and len(skipped) == len(all_candidates):
-            logger.info("All remaining dates are already booked — nothing to do.")
-        else:
-            logger.info("No checkable travel dates remaining this school year — nothing to do.")
+        logger.info("No checkable travel dates remaining this school year — nothing to do.")
         return 0
+
+    booked_candidates = [d for d in candidates if d in booked]
+    if booked_candidates:
+        logger.info(
+            "%d of %d candidate date(s) are already booked — still checking and "
+            "logging their prices (for the website), but excluding them from "
+            "alerting: %s",
+            len(booked_candidates),
+            len(candidates),
+            ", ".join(d.isoformat() for d in booked_candidates),
+        )
 
     secrets = config.get_secrets()
 
@@ -191,50 +200,51 @@ def main(today: date | None = None, now: datetime | None = None) -> int:
     failures: list[tuple[date, str]] = []
     consecutive_failures = 0
 
-    for index, travel_date in enumerate(candidates):
-        if index > 0:
-            time.sleep(random.uniform(*PAUSE_BETWEEN_DATES_SECONDS))
+    with ThreadPoolExecutor(max_workers=PARALLEL_DATES) as executor:
+        for batch_start in range(0, len(candidates), PARALLEL_DATES):
+            batch = candidates[batch_start : batch_start + PARALLEL_DATES]
+            outcomes = list(zip(batch, executor.map(_fetch_and_parse_one, batch)))
 
-        try:
-            raw = scraper.fetch_journey_search(travel_date, artifacts_dir=ARTIFACTS_DIR)
-        except (scraper.BlockedError, scraper.HijackedError) as exc:
-            logger.error(
-                "[%s] %s — aborting the whole run, not attempting further dates: %s",
-                travel_date.isoformat(),
-                type(exc).__name__,
-                exc,
-            )
-            return 1
-        except scraper.ScraperError as exc:
-            logger.warning("[%s] scrape failed, skipping this date: %s", travel_date.isoformat(), exc)
-            failures.append((travel_date, str(exc)))
-            consecutive_failures += 1
-            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                _log_stopped_early(travel_date, len(candidates) - index - 1)
+            stop_early = False
+            for offset, (travel_date, outcome) in enumerate(outcomes):
+                if isinstance(outcome, (scraper.BlockedError, scraper.HijackedError)):
+                    logger.error(
+                        "[%s] %s — aborting the whole run, not scheduling further "
+                        "dates: %s",
+                        travel_date.isoformat(),
+                        type(outcome).__name__,
+                        outcome,
+                    )
+                    return 1
+
+                if isinstance(outcome, Exception):
+                    logger.warning(
+                        "[%s] scrape/parse failed, skipping this date: %s",
+                        travel_date.isoformat(),
+                        outcome,
+                    )
+                    failures.append((travel_date, str(outcome)))
+                    consecutive_failures += 1
+                    if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                        remaining = len(candidates) - (batch_start + offset) - 1
+                        _log_stopped_early(travel_date, remaining)
+                        stop_early = True
+                        break
+                    continue
+
+                consecutive_failures = 0
+                targets = outcome
+                _log_target_summary(travel_date, targets)
+                results[travel_date] = targets
+
+                price_log.append_price_log(
+                    config.PRICE_LOG_PATH,
+                    datetime.now(timezone.utc),
+                    [(travel_date, departure_time, option) for departure_time, option in targets.items()],
+                )
+
+            if stop_early:
                 break
-            continue
-
-        try:
-            options = parser.parse_journeys(raw, travel_date)
-        except parser.ParseError as exc:
-            logger.warning("[%s] parse failed, skipping this date: %s", travel_date.isoformat(), exc)
-            failures.append((travel_date, str(exc)))
-            consecutive_failures += 1
-            if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
-                _log_stopped_early(travel_date, len(candidates) - index - 1)
-                break
-            continue
-
-        consecutive_failures = 0
-        targets = parser.select_target_trains(options, config.TARGET_DEPARTURES)
-        _log_target_summary(travel_date, targets)
-        results[travel_date] = targets
-
-        price_log.append_price_log(
-            config.PRICE_LOG_PATH,
-            datetime.now(timezone.utc),
-            [(travel_date, departure_time, option) for departure_time, option in targets.items()],
-        )
 
     if not results:
         logger.error("all %d attempted candidate date(s) failed — see failures logged above", len(failures))
@@ -247,11 +257,13 @@ def main(today: date | None = None, now: datetime | None = None) -> int:
             len(results),
         )
 
-    matches = evaluate(results)
+    alertable_results = {d: targets for d, targets in results.items() if d not in booked}
+
+    matches = evaluate(alertable_results)
 
     is_test_summary = False
     if not matches and config.TEST_RUN:
-        matches = _best_effort_matches_for_test(results)
+        matches = _best_effort_matches_for_test(alertable_results)
         is_test_summary = bool(matches)
         if is_test_summary:
             logger.info(

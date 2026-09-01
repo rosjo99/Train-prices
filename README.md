@@ -1,6 +1,6 @@
 # Train Price Alert Tool
 
-Checks National Rail Enquiries every evening for the price of the 07:25
+Checks National Rail Enquiries every 6 hours for the price of the 07:25
 and 07:30 Oxford → London Paddington trains (one-way, 16-25 Railcard)
 and emails an alert whenever either fare drops below £10 — but only for
 travel dates that are a Tuesday, Thursday or Friday inside school term
@@ -10,7 +10,10 @@ full design and the discovery process behind it.
 ## Marking a date as already booked
 
 Once you've booked a ticket for a date, tell the tool so it stops
-checking it — no coding involved, no need to touch this repo directly.
+*alerting* on it — no coding involved, no need to touch this repo
+directly. The date's price is still checked and recorded every run (so
+the booked-dates website below keeps showing its latest price), just
+never emailed about.
 
 **Easiest way — the booked-dates website:** open
 `https://rosjo99.github.io/Train-prices/` (once GitHub Pages is enabled
@@ -140,8 +143,9 @@ email through Resend — using real, current fare data throughout. If
 that date's fare happens to be below £10, it's a normal alert; if not
 (the common case), it sends the cheapest real fare it found instead, so
 you still get a real email confirming the whole pipeline — scraping,
-the CSV log, and Resend delivery — works end to end. It also never
-waits for 8pm London; a manual run always executes immediately.
+the CSV log, and Resend delivery — works end to end. It also runs
+immediately — there's no time-of-day gate to wait for (see the next
+section).
 
 By default a manual run only checks **one** date (`max_dates: 1`
 in the "Run workflow" dialog), so it normally finishes in well under a
@@ -152,30 +156,31 @@ re-applies the default value (`1`) whenever this field is submitted
 empty, so a genuinely blank field never actually reaches the workflow;
 `all` is the only reliable way to ask for every date from this UI.
 
-The scheduled run at 8pm every day behaves differently in exactly the
-two ways described above: it waits for the real 8pm London time slot,
-and it only ever emails when a fare has genuinely dropped below £10 —
-see the next section.
+A scheduled run behaves the same way except for the one thing that
+matters: it only ever emails when a fare has genuinely dropped below
+£10, rather than always sending a real email regardless.
 
-## How the daily schedule works
+## How the schedule works
 
-The workflow (`.github/workflows/price-check.yml`) is scheduled for
-**8pm British time, every day**. GitHub Actions cron is UTC-only and has
-no idea about British Summer Time, so the workflow actually schedules
-*two* cron lines — one for 8pm BST, one for 8pm GMT — and the Python
-code itself (`src/main.py`'s `RUN_HOUR_LONDON` check) looks at the real
-Europe/London clock and silently does nothing on whichever of the two
-firings *isn't* actually 8pm there today. So two triggers fire daily,
-but only one of them ever does real work, correctly across the March/
-October clock changes with no manual maintenance.
+The workflow (`.github/workflows/price-check.yml`) runs **every 6
+hours**, scheduled at `37 */6 * * *` (UTC) — i.e. :37 past the hour
+rather than the top of the hour, since jobs scheduled for `:00` are the
+ones most likely to compete for runners and get delayed. There is
+**no time-of-day gate in the Python code** — an earlier design ran once
+daily at a fixed London wall-clock hour, using two cron lines (one for
+BST, one for GMT) plus a Python-side check for which one was really
+"now"; that was dropped because a delayed cron firing meant the whole
+day's check silently no-op'd instead of just happening a bit later,
+which is a worse failure mode than running slightly off-schedule.
 
-Separately, all day-of-week/term-time gating (which travel *dates* get
-checked) is independent of this and already described in `CLAUDE.md`.
+Which travel **dates** get checked (day-of-week/term-time gating) is
+independent of when the job itself runs, and is described in
+`CLAUDE.md`.
 
 **Operational notes:**
 - GitHub Actions cron is best-effort and can be delayed or occasionally
-  skipped — harmless, since all real gating is in Python, not the cron
-  expression.
+  skipped — harmless, since the same dates just get checked at the next
+  firing instead.
 - **GitHub disables scheduled workflows in repositories with no commit
   activity for 60 days.** Any push (including the price-history.csv
   commit each run makes) or a manual dispatch re-arms it.
@@ -218,10 +223,9 @@ deployed (any push to `main` touching `src/term_dates.py` redeploys it
 ```
 pip install -r requirements.txt
 playwright install chromium
-RESEND_API_KEY=... ALERT_EMAIL_TO=... MAX_DATES=1 SKIP_TIME_GATE=1 TEST_RUN=1 python -m src.main
+RESEND_API_KEY=... ALERT_EMAIL_TO=... MAX_DATES=1 TEST_RUN=1 python -m src.main
 ```
 
-`SKIP_TIME_GATE=1` runs immediately instead of only at 8pm London time.
 `TEST_RUN=1` sends a genuine email even if nothing found is below
 threshold (using the cheapest real fare it did find) — see "Running a
 test" above for what this does and why; it's the same thing a manual

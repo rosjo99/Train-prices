@@ -1,27 +1,28 @@
 name: Train price check
 
 # Runs the real daily price check. See docs/plans/001-train-price-alert.md
-# Task 7 for the design this implements, in particular "Running at a
-# fixed local time" for why there are two cron lines below.
+# Task 7 for background on earlier scheduling designs (since superseded —
+# there is no time-of-day gate in src/main.py any more, see below).
 #
 # There is exactly one way to test this manually: click "Run workflow".
 # That's it — no checkboxes to configure. A workflow_dispatch run always
 # does the complete real thing (scrape, write to price-history.csv, send
-# a real email through Resend), never a fixed local time to wait for,
-# never a synthetic/dry-run substitute for any of it — see SKIP_TIME_GATE
-# and TEST_RUN below, both driven purely by github.event_name.
+# a real email through Resend) — see TEST_RUN below, driven purely by
+# github.event_name.
 
 on:
   schedule:
-    # GitHub Actions cron is UTC-only and has no concept of BST/GMT, so
-    # this schedules BOTH the BST-time and GMT-time equivalents of 8pm
-    # London every day. src.main's own RUN_HOUR_LONDON gate (see
-    # src/main.py) checks the real Europe/London wall-clock time and
-    # no-ops the one of these two firings that ISN'T actually 8pm there
-    # today — so exactly one of them does real work, correctly across
-    # the DST transition, with no manual cron updates twice a year.
-    - cron: "0 19 * * *" # 20:00 BST (late Mar - late Oct)
-    - cron: "0 20 * * *" # 20:00 GMT (late Oct - late Mar)
+    # Every 6 hours, at :37 rather than the top of the hour so this
+    # doesn't line up with GitHub Actions' own peak-load minute (cron
+    # jobs bunched at :00 are the ones most likely to be delayed) — see
+    # "GitHub Actions cron is best-effort" below. There is deliberately
+    # no Python-side time-of-day gate any more: which travel *dates* get
+    # checked is still fully gated by term/weekday logic in
+    # src/term_dates.py, but *when* this job itself runs is left entirely
+    # to this cron expression, so a run that fires late or is occasionally
+    # skipped just checks the same dates a few hours later/next time —
+    # harmless, and no longer something Python has to reason about.
+    - cron: "37 */6 * * *"
   workflow_dispatch:
     inputs:
       max_dates:
@@ -38,13 +39,15 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
-    # Every remaining term-time Tue/Thu/Fri is checked on every run that
-    # passes the time gate (see plan §2.2) — up to ~100 dates early in a
-    # term at an estimated 15-25s/date. 90 minutes gives headroom over
-    # the ~30-45 min estimate; tighten this once real run durations are
-    # observed. A manual run defaults max_dates to 1, so it normally
-    # finishes in well under a minute.
-    timeout-minutes: 90
+    # Every remaining term-time Tue/Thu/Fri is checked on every run (see
+    # plan §2.2) — up to ~100 dates early in a term, scraped
+    # PARALLEL_DATES-at-a-time (see src/main.py) rather than one at a
+    # time, so wall-clock time is roughly (dates / PARALLEL_DATES) *
+    # per-date time instead of the old fully-sequential total. 45 minutes
+    # gives headroom over the expected run time; tighten once real
+    # durations are observed. A manual run defaults max_dates to 1, so it
+    # normally finishes in well under a minute.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -61,13 +64,11 @@ jobs:
           ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
           ALERT_EMAIL_FROM: ${{ secrets.ALERT_EMAIL_FROM }}
           MAX_DATES: ${{ inputs.max_dates || '' }}
-          # Both driven purely by trigger type, with no separate user
-          # choice: a manual run always runs right now (never waiting for
-          # 8pm London) and always sends a genuine email using real
-          # scraped data (never staying silent just because nothing was
-          # under threshold) — see src/main.py's `TEST_RUN` handling.
-          # Scheduled (cron) runs never set either.
-          SKIP_TIME_GATE: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
+          # Driven purely by trigger type, with no separate user choice:
+          # a manual run always sends a genuine email using real scraped
+          # data (never staying silent just because nothing was under
+          # threshold) — see src/main.py's `TEST_RUN` handling. Scheduled
+          # (cron) runs never set this.
           TEST_RUN: ${{ github.event_name == 'workflow_dispatch' && '1' || '' }}
         run: python -m src.main
       - name: Commit updated price history

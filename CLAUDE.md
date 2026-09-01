@@ -1,18 +1,21 @@
 # Train Price Alert Tool
 
 ## What this project does
-Checks National Rail Enquiries daily for the price of two specific
-Oxford → London Paddington trains (searched with a 16-25 railcard
-applied) and emails an alert when either fare's cheapest price falls
-below GBP 10 — whether or not that price is confirmed as the
+Checks National Rail Enquiries every 6 hours for the price of two
+specific Oxford → London Paddington trains (searched with a 16-25
+railcard applied) and emails an alert when either fare's cheapest price
+falls below GBP 10 — whether or not that price is confirmed as the
 railcard-discounted one (see Route details). Only travel dates that are
-a Tuesday, Thursday or Friday inside school term time are checked.
+a Tuesday, Thursday or Friday inside school term time are checked. A
+date already marked as booked (see "Marking a date as already booked")
+is still checked and logged, just never alerted on.
 
 ## Constraints
 - Must handle NRE's dynamic (client-rendered) journey planner — a
   headless browser drives it, but via a deep-link URL, not by filling
   in the form (see Tech decisions)
-- Runs once daily via GitHub Actions cron
+- Runs every 6 hours via GitHub Actions cron (no time-of-day gate in
+  Python — see Hosting/scheduling)
 - Email via a free-tier service
 - Searches are made with a 16-25 railcard applied; the resulting
   discount is tracked but does not gate alerting (see Route details)
@@ -68,13 +71,33 @@ a Tuesday, Thursday or Friday inside school term time are checked.
   import, and `python -m src.term_dates --list` prints every checkable
   date so a human can verify after editing. **To update for a new school
   year, edit only the `TERMS` block in that one file.**
-- **Hosting/scheduling:** GitHub Actions, `schedule: "0 7 * * *"` (07:00
-  UTC) plus `workflow_dispatch` for manual runs. GitHub cron is
-  best-effort — it can be delayed or skipped — so **all weekday and
-  term-time gating happens inside the Python job**, never in the cron
-  expression. A delayed or missed run is therefore harmless. Note that
-  GitHub disables scheduled workflows in repos with no activity for 60
-  days; any commit or manual dispatch re-arms them.
+- **Hosting/scheduling:** GitHub Actions, `schedule: "37 */6 * * *"`
+  (every 6 hours, at :37 rather than the top of the hour so it doesn't
+  land on GitHub Actions' own peak-load minute — jobs scheduled for `:00`
+  are the ones most likely to be delayed) plus `workflow_dispatch` for
+  manual runs. There is deliberately **no time-of-day gate in Python any
+  more** (an earlier design ran once daily at a fixed London wall-clock
+  hour via a dual BST/GMT cron pair plus a `RUN_HOUR_LONDON` check in
+  `src/main.py` — dropped because a delayed cron firing meant the whole
+  day's check silently no-op'd, which is worse than just checking a bit
+  later). All that's left in Python is weekday/term-time gating (which
+  travel **dates** get checked), which is independent of when the job
+  itself happens to run. GitHub cron is still best-effort — delayed or
+  occasionally skipped firings are harmless, since the same dates just
+  get checked at the next firing instead. Note that GitHub disables
+  scheduled workflows in repos with no activity for 60 days; any commit
+  or manual dispatch re-arms them.
+- **Concurrency:** up to `src.main.PARALLEL_DATES` (5) travel dates are
+  scraped at once, each in its own headless Chromium browser, via a
+  `ThreadPoolExecutor` batching candidates in fixed-size groups (see
+  `src/main.py`). NRE has no bot protection to trip (see above), so this
+  is purely a wall-clock lever, not something that needed rate-limiting
+  first. Per-attempt timing was also tightened: the page-result wait
+  budget (45s → 20s), the poll interval (500ms → 250ms), and the
+  scrape-retry backoff (30s/90s → 10s/20s) — see `src/scraper.py`. The
+  fixed 5-15s pause previously inserted between every date (serial-only
+  pacing, not needed once dates are batched concurrently) was removed
+  entirely.
 - **Email service:** Resend free tier (3,000 emails/month) via a single
   `POST https://api.resend.com/emails` with a Bearer token. No SMTP,
   OAuth, or app-password rotation. `ALERT_EMAIL_TO` may hold one or more
@@ -120,28 +143,37 @@ them — not just a short lookahead window. Outside term time the
 candidate list is empty and the run is a clean no-op — no browser
 launch, no email.
 
-This is checked in full every day by design, so prices are always fresh
-for every remaining date, at the cost of a much larger daily workload:
-early in a term this is over 100 dates checked per run (~30-45 minutes,
-100+ automated requests to National Rail Enquiries from one IP, once a
-day). Unlike the abandoned Trainline approach, NRE has no bot protection
-to trip (see Tech decisions), so this volume is not a known risk — see
-`docs/plans/001-train-price-alert.md` §2.2/§1.4 for the numbers and the
-accepted tradeoff (mainly wall-clock run time, not IP reputation).
+This is checked in full on every run by design, so prices are always
+fresh for every remaining date, at the cost of a much larger workload:
+early in a term this is over 100 dates checked per run, 100+ automated
+requests to National Rail Enquiries from one IP, four times a day.
+Unlike the abandoned Trainline approach, NRE has no bot protection to
+trip (see Tech decisions), so this volume is not a known risk — see
+`docs/plans/001-train-price-alert.md` §2.2/§1.4 for the original numbers
+and the accepted tradeoff (mainly wall-clock run time, not IP
+reputation). Since dates are now checked `PARALLEL_DATES`-at-a-time
+rather than strictly one at a time (see Tech decisions), actual run time
+is a fraction of that original estimate.
 
 ## Marking a date as already booked (no coding involved)
 
-Once a ticket is booked for a date, that date should stop being checked.
-This is controlled by a plain text file at the repo root,
+Once a ticket is booked for a date, that date should stop being alerted
+on — but its price is still worth tracking, since the booked-dates
+website (see `site/`) shows the last-recorded price for every date,
+booked or not. This is controlled by a plain text file at the repo root,
 `booked-dates.txt` — one `YYYY-MM-DD` per line, `#` for comments, blank
 lines ignored. To use it: open the file on github.com, click the pencil
 (edit) icon, add a line with the date, and commit directly from the
 browser — no local setup, no Python, no pull request needed. The next
-scheduled run reads the file fresh and skips every date listed in it
-before doing any scraping (so a booked date costs zero requests, not
-just zero alerts). See `docs/plans/001-train-price-alert.md` §2.3 for
-the design rationale and the parsing rules (a malformed line is skipped
-with a warning rather than failing the whole run).
+run reads the file fresh: a date listed in it is still scraped and
+appended to `price-history.csv` exactly like any other candidate date,
+it's just excluded before the alert-threshold check, so a genuinely
+cheap fare on a booked date never triggers an email. See
+`docs/plans/001-train-price-alert.md` §2.3 for the original design
+rationale (written when booked dates were skipped entirely — since
+revised to still check/log them, only suppressing the alert) and the
+parsing rules (a malformed line is skipped with a warning rather than
+failing the whole run).
 
 ## Term dates (only check Tue/Thu/Fri that fall within these ranges)
 
@@ -181,3 +213,34 @@ holidays), no checks should run at all.
 ## Plans
 - `docs/plans/001-train-price-alert.md` — full implementation plan,
   research findings, and the seven task specs.
+
+## Claude Code workflow: use this repo's sub-agents
+
+This repo defines four sub-agents in `.claude/agents/` — `planner`,
+`coder`, `reviewer`, `scout`. For any substantive change in this repo (a
+real feature, bug fix, or refactor — not a one-line edit, a doc typo, or
+just answering a question about the code), route the work through them
+rather than doing it all directly in the main conversation:
+
+1. **`planner`** first, for any design decision, multi-step
+   implementation plan, or task decomposition — before any code is
+   written. Give it the goal and relevant context; it does not implement.
+2. **`coder`** to implement, once there's a plan (from `planner`, or
+   from the user directly for something simple enough not to need one).
+   Hand it the plan/spec, not just the original goal — it doesn't make
+   architectural decisions itself.
+3. **`reviewer`** after implementation, to check the diff for bugs,
+   security issues, and adherence to the plan before calling the work
+   done.
+4. **`scout`** for lightweight research along the way — checking docs,
+   finding where something is defined, reading a handful of files — used
+   in place of doing that search directly, whenever it doesn't need deep
+   reasoning to interpret.
+
+This is a standing instruction, not a one-off: treat it as the user
+having explicitly asked for these named agents on every matching task in
+this repo, current session included, so it applies without having to be
+repeated. It doesn't relax any other rule about when to check with the
+user first (risky/irreversible actions, ambiguous requirements, etc.) —
+it only says who does the reading/writing/reviewing once the actual
+approach is decided.
