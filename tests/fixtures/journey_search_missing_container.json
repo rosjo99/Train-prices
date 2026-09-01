@@ -1,4 +1,0 @@
-{
-  "_note": "Hand-edited: deliberately missing the top-level 'outwardJourneys' key, to exercise ParseError.",
-  "someUnrelatedShape": true
-}

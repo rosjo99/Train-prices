@@ -26,13 +26,13 @@ class ConfigError(Exception):
 ORIGIN_NAME = "Oxford"
 DESTINATION_NAME = "London Paddington"
 
-# National Rail Enquiries CRS (station) codes. Confirmed live on
-# 2026-08-31 via a one-off probe script (since deleted as dead research
-# code once its findings were implemented here — see git history if
-# needed): navigating to
-# JOURNEY_PLANNER_URL_TEMPLATE below with these two codes returned a
-# results page showing "Oxford to London Paddington" and real journeys
-# (see JOURNEY_PLANNER_API_HOST's comment for the fare evidence).
+# TransPennine Express (TPE) CRS (station) codes — TPE's own booking
+# engine accepts standard National Rail CRS codes directly in its
+# deep-link URL and resolves them to its own internal station IDs itself
+# (confirmed live 2026-09-01: navigating to JOURNEY_PLANNER_URL_TEMPLATE
+# below triggered the page's own GET /config/stations?search=OXF/PAD
+# calls before its journey-plan POST — see src/scraper.py's docstring for
+# why TPE, not NRE).
 ORIGIN_CRS = "OXF"
 DESTINATION_CRS = "PAD"
 
@@ -42,85 +42,93 @@ TARGET_DEPARTURES: tuple[str, ...] = ("07:25", "07:30")
 
 PRICE_THRESHOLD = Decimal("10.00")
 
-# Confirmed live on 2026-08-31 via a one-off probe script (since deleted
-# as dead research code once its findings were implemented here — see
-# git history if needed): passing railcards=YNG|1 in the deep-link URL
-# produced a real fare response whose
-# jpservices.nationalrail.co.uk/journey-planner JSON contained, per fare,
-# a "railcardFares" array entry with "code": "YNG" and a discounted
-# "prices.adult" distinct from that fare's own "undiscountedPrices" — e.g.
-# one Advance Single fare had undiscountedPrices.adult=4650 (pence) and a
-# railcardFares entry {"code": "YNG", "count": 1, "prices": {"adult": 3060}}.
-# This is the positive, structured confirmation CLAUDE.md requires before
-# any alert can be sent (see src/parser.py, not yet written, for where
-# this gets checked per-fare). "YNG" was the original hypothesis carried
-# over from the abandoned Trainline attempt and turned out to be correct
-# for NRE too — a coincidence, not carried-over evidence.
+# Confirmed live 2026-09-01 (GitHub Actions run 33527007099, capturing
+# the real /jp/journey-plan response via scripts/capture_fixture_tpe.py —
+# see tests/fixtures/journey_plan_sample.json): with "YNG" requested as
+# the railcard, every priced fare's own "totalPrice" already has the
+# discount applied (TPE returns one price per fare, not NRE's separate
+# undiscounted/railcard-discounted pair) — e.g. one Advance Single fare
+# had originalTotalPrice=1400 (pence) and totalPrice=930, with its
+# tickets[0].railcard pointing at "/data/railcards/YNG" and
+# railcardDiscount=470. "YNG" is unchanged from the NRE-era value — a
+# coincidence confirmed independently for TPE, not carried-over evidence.
 RAILCARD_CODE = "YNG"
 
-# Confirmed live on 2026-08-31 via a one-off probe script (since deleted
-# as dead research code once its findings were implemented here — see
-# git history if needed): this exact query-string shape, with the CRS
-# codes/railcard code above
-# substituted in, loaded straight into a real results page — no click
-# needed — showing "07:25 journey from Oxford to London Paddington" and
-# "07:30 journey from Oxford to London Paddington" each priced at
-# "Single from £30.60", and made a same-origin XHR to
-# JOURNEY_PLANNER_API_HOST carrying the full fare JSON (see
-# RAILCARD_CODE's comment above for the discount evidence in that JSON).
-# No DOB or passenger name is needed, unlike Trainline's abandoned
-# RESULTS_URL_TEMPLATE — "adults=1" is sufficient. `leaving_date` is
-# DDMMYY (NRE's own format, confirmed from a real example URL), not ISO.
+# TPE's grid frontend only returns a small, fixed number of the next
+# journeys after the anchor time (confirmed live 2026-09-01: its own
+# POST body set "numJourneys": 3, not configurable via this deep-link's
+# query string). Anchoring exactly at the earliest target departure risks
+# an earlier direct service using up a "slot" before it — confirmed live:
+# anchoring at 07:00 returned 07:02, 07:16, 07:25, pushing the 07:30
+# departure out of the window entirely. Anchoring a few minutes before
+# the earliest target keeps that gap small enough to avoid it — anchoring
+# at 07:20 returned 07:25, 07:30, 07:53, comfortably covering both target
+# departures in one fetch. Not foolproof (a same-route service in that
+# 5-minute gap on some other day could still push a target out), but no
+# worse than the single-anchor approach it replaces, and this is the only
+# lever this deep-link exposes.
+ANCHOR_OFFSET_MINUTES = 5
+
+# Confirmed live 2026-09-01 (same run as RAILCARD_CODE's comment above):
+# this exact URL shape — with the CRS codes above, an ISO "YYYY-MM-DD"
+# date (not NRE's DDMMYY), and "{railcard_code}x1" — loaded straight into
+# a real results grid, no click needed, and made same-origin fetch calls
+# including a POST to JOURNEY_PLANNER_API_HOST carrying the full fare
+# JSON src.scraper captures (see JOURNEY_PLANNER_API_HOST's comment).
+# "adults=1" is expressed as the "1" path segment; TPE's frontend
+# resolves the CRS codes to its own internal station IDs itself, so
+# nothing here needs to know those IDs.
 JOURNEY_PLANNER_URL_TEMPLATE = (
-    "https://www.nationalrail.co.uk/journey-planner/"
-    "?type=single&origin={origin_crs}&destination={destination_crs}"
-    "&leavingType=departing&leavingDate={leaving_date}"
-    "&leavingHour={leaving_hour}&leavingMin={leaving_minute}"
-    "&adults=1&railcards={railcard_code}%7C1&extraTime=0#O"
+    "https://ticket.tpexpress.co.uk/journeys-grid/"
+    "{origin_crs}/{destination_crs}/{leaving_date}T{leaving_hour}:{leaving_minute}"
+    "//1//{railcard_code}x1"
+    "?departNow=no&realTime=no&searchPreferences=%2C%2C%2C%2Ctrue"
+    "&showAdditionalRoutes=no&showCheapest=no&tocSpecific=no"
 )
 
 
 def build_journey_planner_url(travel_date: date, hour: str, minute: str) -> str:
-    """Build a deep-link journey-planner URL for a specific date/time.
+    """Build a deep-link journeys-grid URL for a specific date/time.
 
     Single source of truth for JOURNEY_PLANNER_URL_TEMPLATE's formatting,
-    shared by src.scraper (anchored at the earliest of TARGET_DEPARTURES,
-    so one fetch's results cover every target train) and src.notifier
-    (anchored at each alerted train's own departure time, for the
-    email's per-fare link).
+    shared by src.scraper (anchored a few minutes before the earliest of
+    TARGET_DEPARTURES — see ANCHOR_OFFSET_MINUTES — so one fetch's
+    results cover every target train) and src.notifier (anchored at each
+    alerted train's own departure time, for the email's per-fare link).
     """
     return JOURNEY_PLANNER_URL_TEMPLATE.format(
         origin_crs=ORIGIN_CRS,
         destination_crs=DESTINATION_CRS,
-        leaving_date=travel_date.strftime("%d%m%y"),
+        leaving_date=travel_date.isoformat(),
         leaving_hour=hour,
         leaving_minute=minute,
         railcard_code=RAILCARD_CODE,
     )
 
-# The same-origin API NRE's own journey-planner page calls to fetch fares
-# (confirmed live on 2026-08-31): a request to this host, made by the page
+# The same-origin API TPE's own journeys-grid page calls to fetch fares
+# (confirmed live 2026-09-01): a POST to this host, made by the page
 # itself after JOURNEY_PLANNER_URL_TEMPLATE loads, returns the structured
-# JSON src.scraper captures — no DataDome/CAPTCHA gate, unlike Trainline
-# (see CLAUDE.md's Tech decisions for the full comparison).
-JOURNEY_PLANNER_API_HOST = "jpservices.nationalrail.co.uk"
+# JSON src.scraper captures — no bot-protection gate observed across
+# either the diagnostic Camoufox probe or the real fixture-capture run
+# (see CLAUDE.md's Tech decisions).
+JOURNEY_PLANNER_API_HOST = "api.tpexpress.co.uk"
 
 # The specific endpoint on JOURNEY_PLANNER_API_HOST that returns the
-# outwardJourneys/fares payload this scraper needs. The same host also
-# serves sibling endpoints (observed live: "/fare-info") for other data
+# outward-journeys/fares payload this scraper needs. The same host also
+# serves sibling endpoints (observed live: "/jp/plusbus") for other data
 # the page loads — src.scraper's response handler must match on this path
 # too, not just the host, or it can capture the wrong endpoint's response
 # whenever that sibling happens to reply after the real one.
-JOURNEY_PLANNER_API_PATH = "/journey-planner"
+JOURNEY_PLANNER_API_PATH = "/jp/journey-plan"
 
-# Every page on nationalrail.co.uk loads third-party ad/tracking scripts,
-# one of which was observed (during interactive UI-driven probing, not the
-# deep-link approach this scraper actually uses) redirecting the whole tab
-# to a Booking.com hotel search. The deep-link approach never triggered
-# this in any probe run, but src.scraper still guards against it — see
-# its NRE_HOST_SUFFIX usage — as cheap defense in depth for an unattended
-# daily job, since the underlying ad ecosystem is outside our control.
-NRE_HOST_SUFFIX = "nationalrail.co.uk"
+# Every page on tpexpress.co.uk (www., ticket., and api. subdomains all
+# end in this suffix) loads third-party scripts (Usercentrics CMP, Google
+# Maps, PayPal). None were observed redirecting the tab away during any
+# probe or capture run, but src.scraper still guards against it — see its
+# TPE_HOST_SUFFIX usage — as cheap defense in depth for an unattended
+# daily job, since the ad/tracking ecosystem on the page is outside our
+# control.
+TPE_HOST_SUFFIX = "tpexpress.co.uk"
 
 # --- Time ------------------------------------------------------------
 
