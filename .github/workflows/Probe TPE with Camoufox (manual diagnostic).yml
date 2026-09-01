@@ -1,6 +1,3 @@
-```yaml
-name: Probe TPE with Camoufox (manual diagnostic)
-
 # Diagnostic only:
 # Does Camoufox successfully load TPE and its journey application?
 
@@ -65,5 +62,5 @@ jobs:
           path: /tmp/camoufox-probe
           if-no-files-found: warn
           retention-days: 14
-```
+
 
