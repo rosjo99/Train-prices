@@ -23,11 +23,12 @@ on:
     # skipped just checks the same dates a few hours later/next time —
     # harmless, and no longer something Python has to reason about.
     - cron: "37 */6 * * *"
+  # No inputs, deliberately: a manual run always checks every remaining
+  # candidate date, exactly like a scheduled run — see "Run price check"
+  # below. There used to be a max_dates input for a quicker manual test,
+  # removed per explicit request so every manual run is a full, real
+  # measurement rather than a partial one.
   workflow_dispatch:
-    inputs:
-      max_dates:
-        description: "Number of dates to check, for a quicker test. Type 'all' to check every remaining date (GitHub doesn't reliably apply a blank value here, so don't just clear this field)"
-        default: "1"
 
 concurrency:
   group: train-price-check
@@ -52,8 +53,9 @@ jobs:
     # after — see docs/plans/002-speed-up-price-check-run.md §1/§10 and
     # docs/plans/003-scheduler-and-retry-horizon.md §4.7/§11. 20 minutes
     # keeps real headroom over that projection without leaving 18+
-    # minutes of dead slack. A manual run defaults max_dates to 1, so it
-    # normally finishes in well under a minute.
+    # minutes of dead slack. A manual run checks every date too (see
+    # workflow_dispatch above), so it takes roughly the same time as a
+    # scheduled run rather than finishing early.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -84,7 +86,6 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
           ALERT_EMAIL_FROM: ${{ secrets.ALERT_EMAIL_FROM }}
-          MAX_DATES: ${{ inputs.max_dates || '' }}
           # Driven purely by trigger type, with no separate user choice:
           # a manual run always sends a genuine email using real scraped
           # data (never staying silent just because nothing was under

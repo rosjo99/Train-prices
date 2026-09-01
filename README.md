@@ -147,14 +147,11 @@ the CSV log, and Resend delivery — works end to end. It also runs
 immediately — there's no time-of-day gate to wait for (see the next
 section).
 
-By default a manual run only checks **one** date (`max_dates: 1`
-in the "Run workflow" dialog), so it normally finishes in well under a
-minute. Type a bigger number to test against more dates at once, or
-type `all` to check every remaining date this school year. **Don't just
-clear the field to blank** — GitHub's own "Run workflow" web UI silently
-re-applies the default value (`1`) whenever this field is submitted
-empty, so a genuinely blank field never actually reaches the workflow;
-`all` is the only reliable way to ask for every date from this UI.
+A manual run checks every remaining candidate date this school year,
+exactly like a scheduled run — there's no option to restrict it to a
+handful of dates for a quicker test. This is deliberate: a manual run is
+meant to be a real, full measurement (e.g. of total run time), not a
+partial one.
 
 A scheduled run behaves the same way except for the one thing that
 matters: it only ever emails when a fare has genuinely dropped below
