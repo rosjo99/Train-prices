@@ -1,0 +1,35 @@
+name: Probe CrossCountry with Camoufox (manual diagnostic)
+
+# One-off feasibility check, not part of the price-check pipeline: does
+# Camoufox (a fingerprint-evading Firefox build) get past the Cloudflare
+# bot management that a prior investigation found blocking both curl and
+# this project's own headless-Chromium approach on
+# buy.crosscountrytrains.co.uk? See
+# docs/plans/001-train-price-alert.md §1.5 and CLAUDE.md's Tech decisions
+# for that history. No secrets required, no scraped data committed —
+# results are just uploaded as a workflow artifact for review.
+
+on:
+  workflow_dispatch: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install camoufox
+      - run: python -m camoufox fetch
+      - name: Run probe
+        id: probe
+        run: python scripts/probe_camoufox_crosscountry.py --out-dir /tmp/camoufox-probe
+      - name: Upload probe artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: camoufox-crosscountry-probe
+          path: /tmp/camoufox-probe
+          retention-days: 14
