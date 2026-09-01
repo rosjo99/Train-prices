@@ -455,6 +455,37 @@ same practical outcome: rejected before any real page content loads,
 confirmed without needing a browser at all. NRE remains the only
 viable retailer.
 
+### 1.16 Grand Central investigated (2026-09-01) and rejected — no visible vendor, still blocked
+
+Grand Central (`buy.grandcentralrail.com`, deep-link shape
+`https://buy.grandcentralrail.com/search?origin=<CRS-prefixed-code>&destination=<CRS-prefixed-code>&adults=1&children=0&outboundTime=<ISO8601>&outboundTimeType=DEPARTURE&railcards=<JSON>`)
+uses the exact same deep-link shape as §1.5's CrossCountry — expected,
+since both are Arriva UK Trains operators. Unlike CrossCountry, though,
+this one looked genuinely promising on first inspection: `curl` gets a
+clean HTTP 200, 3/3 attempts, `server: AmazonS3` (a static site, not
+obviously fronted by Cloudflare/Akamai/DataDome — no bot-vendor marker
+anywhere in the response headers or body), and its Content-Security-Policy
+allow-lists `ojp.nationalrail.co.uk` — National Rail's own Open Journey
+Planner API — suggesting the frontend might call NRE's own
+infrastructure directly.
+
+Result: still rejected. Headless Chromium gets `net::ERR_CONNECTION_RESET`
+on the deep-link (reproduced twice) and again on both
+`www.grandcentralrail.com` and the bare `buy.grandcentralrail.com` root
+— domain-wide, confirmed via the outbound proxy's own status log (same
+signature as every prior rejection: tunnel closed mid-handshake, 39
+bytes received). So the "no visible vendor" reading from the static
+HTML doesn't mean unprotected — same conclusion as §1.9's TPExpress:
+some UK retailers' bot protection operates at the TLS/connection level
+without leaving any marker in page content for `curl` to see. The
+`ojp.nationalrail.co.uk` CSP entry remains an interesting unconfirmed
+lead (OJP is NRE's own official journey-planning API, distinct from the
+`jpservices.nationalrail.co.uk` endpoint this project's scraper already
+uses) but isn't something this investigation could act on — the search
+page itself never loads far enough to observe what it actually calls.
+NRE (via the existing `jpservices` endpoint) remains the only viable
+retailer.
+
 ---
 
 ## 2. Decisions not already in CLAUDE.md

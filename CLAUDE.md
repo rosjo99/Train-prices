@@ -76,10 +76,17 @@ got here.
   — identical template on both sites) — and Omio (`www.omio.co.uk`) —
   Cloudflare's interactive "Just a moment..." challenge page instead of
   DataDome, but the same "`curl` alone settles it" outcome. No browser
-  probe was needed for any of the three. NRE has no bot protection at
-  all (confirmed via 20+ live probe runs). See
-  `docs/plans/001-train-price-alert.md`
-  §1.4/§1.5/§1.6/§1.7/§1.8/§1.9/§1.10/§1.11/§1.12/§1.13/§1.14/§1.15/§2.2.
+  probe was needed for any of the three. Grand Central
+  (`buy.grandcentralrail.com`, same Arriva-operator deep-link shape as
+  CrossCountry) is the trickiest case: `curl` gets a clean 200 with no
+  bot-vendor marker anywhere (served `AmazonS3`, not obviously fronted
+  by Cloudflare/Akamai/DataDome) — but headless Chromium is still
+  blocked domain-wide exactly like every other retailer, confirming
+  "no visible vendor in the static HTML" is not the same as
+  unprotected; some sites' blocking leaves no trace for `curl` to see
+  at all. NRE has no bot protection at all (confirmed via 20+ live
+  probe runs). See `docs/plans/001-train-price-alert.md`
+  §1.4/§1.5/§1.6/§1.7/§1.8/§1.9/§1.10/§1.11/§1.12/§1.13/§1.14/§1.15/§1.16/§2.2.
 - **Scraping approach:** Playwright (sync API), headless Chromium,
   navigating straight to a fully-parameterised deep-link URL —
   `https://www.nationalrail.co.uk/journey-planner/?type=single&origin=OXF&destination=PAD&leavingType=departing&leavingDate=DDMMYY&leavingHour=HH&leavingMin=MM&adults=1&railcards=YNG%7C1&extraTime=0`
