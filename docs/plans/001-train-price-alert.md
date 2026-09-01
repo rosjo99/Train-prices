@@ -387,6 +387,24 @@ fingerprinting, not any single vendor's JS challenge, is the common
 mechanism behind every rejection since CrossCountry. NRE remains the
 only viable retailer.
 
+### 1.12 Rail Europe investigated (2026-09-01) and rejected — blocked outright, no browser probe needed
+
+Rail Europe (`www.raileurope.com`, deep-link shape
+`https://www.raileurope.com/en/journey/<origin-slug>-<destination-slug>-<journeyId>?currency=GBP`)
+is the first retailer since Trainline itself where `curl` alone is
+enough to confirm rejection — no headless-browser probe needed to
+reach a verdict. `curl` against the deep-link gets HTTP 403, 3/3
+attempts, with response headers `x-datadome: protected`,
+`server: cloudflare`, and a `datadome` cookie, and a body that is an
+explicit DataDome CAPTCHA interstitial ("Please enable JS and disable
+any ad blocker", loading `geo.captcha-delivery.com`/
+`ct.captcha-delivery.com`) rather than any real page content. This is
+the same DataDome product blocking Trainline in §1.1-1.3, just fronted
+by Cloudflare and configured to challenge even a plain, unauthenticated
+`curl` request rather than only automated browsers — stricter than
+every other retailer investigated in this section, all of which let
+plain `curl` through. NRE remains the only viable retailer.
+
 ---
 
 ## 2. Decisions not already in CLAUDE.md

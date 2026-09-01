@@ -35,12 +35,13 @@ got here.
   never `float`; all dates/times go through
   `zoneinfo.ZoneInfo("Europe/London")`, never a naive clock read.
 - **Retailer: National Rail Enquiries, not any UK train retailer other
-  than NRE.** Every non-NRE retailer checked so far is bot-protected,
-  domain-wide, against headless Chromium (`net::ERR_CONNECTION_RESET`
-  on the deep-link and on unrelated pages of the same site) even though
-  plain `curl` gets through cleanly — treat this as the default
-  expectation for any new UK train retailer, not something to assume
-  safe until proven otherwise. Confirmed so far: Trainline itself
+  than NRE.** Every non-NRE retailer checked so far is bot-protected —
+  most (see exception below) block headless Chromium domain-wide
+  (`net::ERR_CONNECTION_RESET` on the deep-link and on unrelated pages
+  of the same site) even though plain `curl` gets through cleanly —
+  treat this as the default expectation for any new UK train retailer,
+  not something to assume safe until proven otherwise. Confirmed so
+  far: Trainline itself
   (DataDome, 403 + CAPTCHA); CrossCountry
   (`buy.crosscountrytrains.co.uk`, Cloudflare bot management); East
   Midlands Railway, London Northwestern Railway, Northern, and West
@@ -64,10 +65,15 @@ got here.
   this is the common mechanism (not any single vendor's JS challenge)
   behind every rejection since CrossCountry. None of this is fixable
   without TLS fingerprint spoofing, which is stealth tooling this
-  project's standing decision already rules out. NRE has no bot
-  protection at all (confirmed via 20+ live probe runs). See
-  `docs/plans/001-train-price-alert.md`
-  §1.4/§1.5/§1.6/§1.7/§1.8/§1.9/§1.10/§1.11/§2.2.
+  project's standing decision already rules out. The exception to
+  "curl gets through": Rail Europe (`www.raileurope.com`) — the same
+  DataDome product blocking Trainline, but configured to challenge
+  even a plain `curl` request outright (HTTP 403, `x-datadome:
+  protected`, an explicit CAPTCHA interstitial body) rather than only
+  automated browsers, so no browser probe was needed to reach a
+  verdict there. NRE has no bot protection at all (confirmed via 20+
+  live probe runs). See `docs/plans/001-train-price-alert.md`
+  §1.4/§1.5/§1.6/§1.7/§1.8/§1.9/§1.10/§1.11/§1.12/§2.2.
 - **Scraping approach:** Playwright (sync API), headless Chromium,
   navigating straight to a fully-parameterised deep-link URL —
   `https://www.nationalrail.co.uk/journey-planner/?type=single&origin=OXF&destination=PAD&leavingType=departing&leavingDate=DDMMYY&leavingHour=HH&leavingMin=MM&adults=1&railcards=YNG%7C1&extraTime=0`
