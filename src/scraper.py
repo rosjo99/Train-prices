@@ -98,12 +98,31 @@ RETRY_BACKOFF_SECONDS: tuple[int, ...] = (5, 10)
 # itself has shown none of these across either the diagnostic Camoufox
 # probe or the real fixture-capture run — this exists in case that ever
 # changes, not because it's expected.
+#
+# IMPORTANT: do not add a bare "captcha" substring here. TPE's own page
+# bootstrap config harmlessly embeds a reCAPTCHA site key
+# ("googleRecaptchaKey":"6Le4ESkTAAAAAIW-1dS_obXeJ1oOlztiaNZ31hOE",
+# almost certainly for some unrelated form elsewhere on the site) on
+# every single page load — this was a proven false positive in
+# production, not a hypothetical: GitHub Actions run 33530583374 failed
+# every travel date instantly with BlockedError before any journey-plan
+# response was ever captured, and the debug artifact
+# page-2026-09-08.html from that run shows the "googleRecaptchaKey"
+# field present in the raw HTML from the moment domcontentloaded fires.
+# A bare "captcha" marker matches "...Recaptcha..." as a substring, so
+# it fired a hard block on every page load, every date, unconditionally.
+# Markers here must be specific challenge/block phrases unlikely to
+# appear in ordinary page config, analytics, or third-party scripts
+# (mirrors scripts/probe_camoufox_tpe.py's already-validated
+# STRONG_BLOCK_MARKERS list).
 BLOCK_MARKERS: tuple[str, ...] = (
-    "captcha",
     "are you a robot",
     "access denied",
     "datadome",
     "cloudflare-challenge",
+    "verify you are human",
+    "checking your browser",
+    "just a moment",
 )
 
 # Best-effort cookie-banner selectors, tried in order. TPE's Usercentrics
