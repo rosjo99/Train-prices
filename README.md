@@ -1,6 +1,6 @@
 # Train Price Alert Tool
 
-Checks National Rail Enquiries every 6 hours for the price of the 07:25
+Checks TransPennine Express' booking engine every 6 hours for the price of the 07:25
 and 07:30 Oxford → London Paddington trains (one-way, 16-25 Railcard)
 and emails an alert whenever either fare drops below £10 — but only for
 travel dates that are a Tuesday, Thursday or Friday inside school term
@@ -11,8 +11,8 @@ The alert email itself is styled to match the booked-dates website below
 and shows two tables: dates currently under £10 that aren't booked yet
 (the reason the email was sent), and — for information only, never a
 reason to email — dates already booked, with their current prices. Each
-train's price links straight through to a bookable National Rail
-Enquiries search, and a muted second line under each price shows that
+train's price links straight through to a bookable TransPennine Express
+search, and a muted second line under each price shows that
 train's arrival time and flags it if it isn't a direct journey. See
 `docs/plans/004-redesign-alert-email.md` for the full design.
 
@@ -191,10 +191,11 @@ independent of when the job itself runs, and is described in
   activity for 60 days.** Any push (including the price-history.csv
   commit each run makes) or a manual dispatch re-arms it.
 - If a run starts failing with `BlockedError` or `HijackedError`, that's
-  unexpected — National Rail Enquiries has no bot protection as of this
-  writing (see `CLAUDE.md`'s Tech decisions), so this means either its
-  site changed or a third-party ad script is misbehaving; check the
-  uploaded debug artifacts on the failed run first.
+  unexpected — TransPennine Express has shown no bot protection as of
+  this writing (see `CLAUDE.md`'s Tech decisions), so this means either
+  its site changed or a third-party script (Usercentrics, Google Maps,
+  PayPal) is misbehaving; check the uploaded debug artifacts on the
+  failed run first.
 
 ## Price history log
 
@@ -228,7 +229,7 @@ deployed (any push to `main` touching `src/term_dates.py` redeploys it
 
 ```
 pip install -r requirements.txt
-playwright install chromium
+python -m camoufox fetch
 RESEND_API_KEY=... ALERT_EMAIL_TO=... MAX_DATES=1 TEST_RUN=1 python -m src.main
 ```
 

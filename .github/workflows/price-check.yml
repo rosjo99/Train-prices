@@ -45,42 +45,33 @@ jobs:
     # size is unchanged, see docs/plans/002-speed-up-price-check-run.md
     # Decisions §1), scraped up to PARALLEL_DATES at once via a continuous
     # scheduler (see src/main.py) rather than one at a time or in fixed
-    # batches. Per-date cost dropped sharply once the navigation/poll/
-    # backoff timings and per-date attempt count were tuned to measured
-    # values (see src/scraper.py and src/main.py's
-    # FULL_RETRY_HORIZON_DAYS): a real scheduled run measured at 315s
-    # (5m15s) total before those changes, projected at roughly 1m50s-2m
-    # after — see docs/plans/002-speed-up-price-check-run.md §1/§10 and
-    # docs/plans/003-scheduler-and-retry-horizon.md §4.7/§11. 20 minutes
-    # keeps real headroom over that projection without leaving 18+
-    # minutes of dead slack. A manual run checks every date too (see
-    # workflow_dispatch above), so it takes roughly the same time as a
-    # scheduled run rather than finishing early.
-    timeout-minutes: 20
+    # batches. The 1m50s-2m projection that used to justify 20 minutes here
+    # was Chromium-derived (docs/plans/002 §1/§10, 003 §4.7/§11) and no
+    # longer holds: this repo now drives Camoufox (headless Firefox,
+    # humanize=True), a fresh browser per attempt, which is expected to be
+    # slower by an unmeasured amount, and
+    # docs/plans/005-migrate-to-tpe.md §7.1 has also suspended the
+    # single-attempt speculative-zone optimisation that used to shorten
+    # the tail (FULL_RETRY_HORIZON_DAYS widened from 95 to 400 — see
+    # src/main.py). 30 minutes is provisional headroom until a real full
+    # run under Camoufox produces a measured number (see that plan's
+    # §7.2/§9) — it is not itself a measurement.
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: "3.12", cache: pip }
       - run: pip install -r requirements.txt
-      - uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
-      # No --with-deps: confirmed live on run 33489993285 (2026-09-01)
-      # that --with-deps installs nothing this scraper actually needs on
-      # the ubuntu-24.04 runner image — every shared library Chromium
-      # requires (libnss3, libcairo2, libasound2t64, ...) was already
-      # present ("is already the newest version"), and the only 9
-      # packages it did install were fonts (fonts-ipafont-gothic,
-      # fonts-freefont-ttf, ...), which this scraper never needs since it
-      # reads a JSON XHR rather than rendering/reading glyphs. The
-      # apt-get update this triggers cost ~16s on every run, uncacheable
-      # since runners are fresh VMs each time. If a future runner image
-      # ever drops one of those shared libraries, Chromium simply fails
-      # to launch, src/scraper.py's _launch_browser turns that into a
-      # clear ScraperError, the job fails loudly and uploads artifacts —
-      # and the fix is putting --with-deps back, a one-word revert.
-      - run: playwright install chromium
+      # No actions/cache step for the Camoufox browser build: unlike
+      # Playwright's fixed ~/.cache/ms-playwright, Camoufox's own cache
+      # location was not confirmed as a stable, non-user-scoped path
+      # during this migration (see docs/plans/005-migrate-to-tpe.md
+      # §5.2) — `python -m camoufox path` would need to be checked live
+      # before caching it. Caching the wrong directory would silently
+      # cache nothing useful, so this is dropped rather than guessed;
+      # re-downloading the browser build every run is a correctness-
+      # neutral cost, not a correctness risk.
+      - run: python -m camoufox fetch
       - name: Run price check
         env:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
