@@ -371,6 +371,8 @@ def probe(context: BrowserContext, url: str, label: str, out_dir: Path) -> dict[
     return result
 
 def main() -> int:
+    print("[info] probe starting", flush=True)
+    sys.stdout.flush()
     parser = argparse.ArgumentParser()
     parser.add_argument("--out-dir", default="/tmp/camoufox-probe-cc")
     parser.add_argument("--headed", action="store_true")
