@@ -2,6 +2,8 @@
 # Does Camoufox successfully load CrossCountry's booking site, or does its
 # Cloudflare protection (confirmed blocking plain curl requests, including
 # the bare homepage) also block a real GitHub-Actions-hosted browser?
+#
+# Pure Camoufox attempt – no proxy, no external solver.
 name: Probe CrossCountry with Camoufox (manual diagnostic)
 
 on:
@@ -10,7 +12,7 @@ on:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 12
 
     steps:
       - name: Checkout
@@ -45,7 +47,7 @@ jobs:
       - name: Run Camoufox probe
         id: probe
         env:
-          PYTHONUNBUFFERED: "1"          # force live logs
+          PYTHONUNBUFFERED: "1"
         run: |
           python -u scripts/probe_camoufox_crosscountry.py \
             --out-dir /tmp/camoufox-probe-cc
@@ -54,6 +56,7 @@ jobs:
         if: always()
         run: |
           if [ -f /tmp/camoufox-probe-cc/summary.json ]; then
+            echo "===== summary.json ====="
             cat /tmp/camoufox-probe-cc/summary.json
           else
             echo "No summary.json was produced"
