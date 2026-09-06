@@ -1,7 +1,9 @@
 # Diagnostic only:
-# Does Camoufox successfully load TPE and its journey application?
+# Does Camoufox successfully load CrossCountry's booking site, or does its
+# Cloudflare protection (confirmed blocking plain curl requests, including
+# the bare homepage) also block a real GitHub-Actions-hosted browser?
 
-name: Probe TPE with Camoufox (manual diagnostic)
+name: Probe CrossCountry with Camoufox (manual diagnostic)
 
 on:
   workflow_dispatch: {}
@@ -44,14 +46,14 @@ jobs:
       - name: Run Camoufox probe
         id: probe
         run: |
-          python scripts/probe_camoufox_tpe.py \
-            --out-dir /tmp/camoufox-probe
+          python scripts/probe_camoufox_crosscountry.py \
+            --out-dir /tmp/camoufox-probe-cc
 
       - name: Print probe summary
         if: always()
         run: |
-          if [ -f /tmp/camoufox-probe/summary.json ]; then
-            cat /tmp/camoufox-probe/summary.json
+          if [ -f /tmp/camoufox-probe-cc/summary.json ]; then
+            cat /tmp/camoufox-probe-cc/summary.json
           else
             echo "No summary.json was produced"
           fi
@@ -60,30 +62,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: camoufox-tpe-probe
-          path: /tmp/camoufox-probe
+          name: camoufox-crosscountry-probe
+          path: /tmp/camoufox-probe-cc
           if-no-files-found: warn
           retention-days: 14
-
-      - name: Capture TPE journey-plan fixture (07:25 + 07:30)
-        if: always()
-        run: |
-          python scripts/capture_fixture_tpe.py \
-            --origin OXF --destination PAD \
-            --datetime "2026-12-18T07:20" \
-            --out /tmp/tpe-fixture.json
-
-      - name: Print captured fixture
-        if: always()
-        run: cat /tmp/tpe-fixture.json 2>/dev/null || echo "(no fixture written)"
-
-      - name: Upload fixture artifact
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: tpe-fixture
-          path: /tmp/tpe-fixture.json
-          if-no-files-found: warn
-          retention-days: 14
-
-
