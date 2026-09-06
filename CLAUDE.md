@@ -1,5 +1,34 @@
 # Train Price Alert Tool
 
+## Core priorities
+
+1. **Correctness of price data and alert triggering** — a missed or wrong
+   alert defeats the whole point of the tool; a false alert is a much
+   smaller cost than a missed one (see Route details).
+2. **Never leak secrets** (`RESEND_API_KEY`, email addresses) into logs,
+   error messages, commits, or `__repr__`.
+3. **Check in with the user before non-trivial decisions** — new
+   dependencies, changes to term dates/thresholds/route, or anything not
+   already settled in this file — rather than deciding unilaterally.
+4. **Stay within the task's scope.** This is a small, single-purpose repo;
+   don't add abstractions, config options, or retailers it doesn't need.
+
+## Repo map
+
+- `src/` — the tool itself: `main.py` (scheduler/entrypoint), `scraper.py`
+  (Camoufox browser automation), `parser.py` (fare extraction),
+  `notifier.py` (email), `term_dates.py` (term/day gating),
+  `booked_dates.py`, `price_log.py`, `config.py`, `models.py`.
+- `tests/` — one test file per `src/` module, plus `tests/fixtures/`.
+- `scripts/` — one-off/diagnostic scripts (fixture capture, term export,
+  Camoufox probing), not part of the scheduled run.
+- `site/` — static booked-dates viewer (plain HTML/CSS/JS).
+- `docs/plans/` — implementation plans and the measured evidence behind
+  every constant in Tech decisions; read the specific plan referenced
+  inline when a number needs re-justifying, not routinely.
+- `booked-dates.txt`, `price-history.csv` — plain-text data files edited
+  via GitHub web UI / appended by the tool, not by hand-editing logic.
+
 ## What this project does
 Checks TransPennine Express's booking engine every 6 hours for the price of two
 specific Oxford → London Paddington trains (searched with a 16-25
@@ -262,6 +291,51 @@ one of the excluded ranges/dates.
 Outside of these three active ranges (e.g. summer holidays, Christmas
 holidays), no checks should run at all.
 
+## Context & token discipline
+
+Start with the exact file(s) named or clearly implied by the task. Then:
+
+1. Use targeted `Grep`/search for symbols, config constants, or doc
+   references rather than reading whole modules speculatively.
+2. Read only the surrounding code needed to understand the change.
+3. Follow into `docs/plans/*.md` only when the current file doesn't
+   already answer the question (see Tech decisions/Plans for which plan
+   covers which era/decision).
+
+Hard rules:
+
+- Don't bulk-read `docs/plans/` or `tests/fixtures/` "to see what's
+  there" — go to the specific plan or fixture the task needs.
+- Never re-read a file already read this session unless it changed.
+- `price-history.csv` grows every run — inspect its tail or a filtered
+  slice, never the whole file.
+- Redirect verbose command/test output to a file and read only its
+  tail/summary rather than letting it dump into context.
+- If a task looks like it needs more than a handful of file reads, say
+  so and get a go-ahead before continuing rather than just proceeding.
+
+## Decisions stay with the user
+
+Don't unilaterally decide things like: changing the alert threshold,
+railcard, route, or target trains; adding a retailer, dependency, or
+notification channel; loosening a safety rule (No DOM fallback, secrets
+handling, term-date exclusions). State the options briefly, give a
+recommendation if you have one, and wait for the user to pick.
+
+Proceed without asking only when an existing convention in this file
+fully determines the answer, or the change is a small, clearly-scoped
+mechanical edit the user already described in full.
+
+## Challenge inefficient requests
+
+Don't blindly do things that would unnecessarily: scrape more dates or
+run more Camoufox instances than the task needs; duplicate logic that
+`term_dates.py`/`booked_dates.py`/`price_log.py` already provides;
+widen `docs/plans/` scope beyond the plan at hand; or combine unrelated
+cleanup with the requested change. If there's a concrete efficiency or
+scope problem, explain it briefly and propose the smallest sensible
+alternative before proceeding.
+
 ## Plans
 - `docs/plans/001-train-price-alert.md` — full implementation plan,
   research findings, and the seven task specs. Its NRE-specific research
@@ -282,29 +356,28 @@ holidays), no checks should run at all.
   timing, `PARALLEL_DATES` under Firefox) still awaiting a real
   measurement.
 
-## Claude Code workflow: use this repo's sub-agents
+## Agents
 
 This repo defines four sub-agents in `.claude/agents/` — `planner`,
-`coder`, `reviewer`, `scout`. For a real feature, bug fix, or refactor
-(not a one-line edit, a doc typo, or answering a question), route work
-through them instead of doing it all in the main conversation. Scale
-the pipeline to the change:
+`coder`, `reviewer`, `scout`. Each subagent call opens a fresh context
+window (including reloading this file) — a real cost, not a free
+isolation boundary. For a real feature, bug fix, or refactor (not a
+one-line edit, a doc typo, or answering a question), route work through
+them instead of doing it all in the main conversation; don't delegate
+trivial edits, and don't chain agents more than one hop deep.
 
-1. **`planner`** for anything with real design decisions or multiple
-   steps. Skip it for a small, well-scoped change (clear cause, clear
-   fix, one or two files) — write a one- or two-line spec yourself and
-   hand it straight to `coder`. Don't spawn a planning pass just to
-   restate an obvious fix.
-2. **`coder`** to implement, given a plan or a direct spec. It doesn't
-   make architectural decisions itself.
-3. **`reviewer`** after implementation, to check the diff for bugs,
-   security issues, and plan adherence.
-4. **`scout`** for lightweight research (finding where something is
-   defined, checking a doc) in place of doing that search directly.
-
-Keep agent handoffs and reports terse: point at file:line and quote
-only the few lines under discussion, never a whole file or a large
-diff back into the conversation — the caller can already read the repo.
+- **`planner`** — anything with real design decisions or multiple
+  steps; presents the plan before handing off to `coder`/`reviewer`.
+  Skip it for a small, well-scoped change (clear cause, clear fix, one
+  or two files) — write a one- or two-line spec yourself and hand it
+  straight to `coder`.
+- **`coder`** — implementation of a clear, already-approved plan/spec;
+  does not invent design decisions.
+- **`reviewer`** — after implementation, to check the diff for bugs,
+  security issues, and plan adherence.
+- **`scout`** — lightweight research (finding where something is
+  defined, checking a `docs/plans/` entry) in place of doing that
+  search directly.
 
 This is a standing instruction, not a one-off: treat it as the user
 having explicitly asked for these named agents on every matching task
@@ -312,3 +385,21 @@ in this repo, current session included. It doesn't relax any other rule
 about when to check with the user first (risky/irreversible actions,
 ambiguous requirements, etc.) — it only says who does the
 reading/writing/reviewing once the actual approach is decided.
+
+Agents should follow this file rather than duplicating its rules.
+Handoffs use `file:line`/symbol references, not pasted content.
+
+## Communication
+
+Keep plans, agent handoffs, and reports terse.
+
+Prefer:
+
+- what changed/found;
+- why it matters;
+- exact `file:line` references;
+- next action, if any — framed as a question when it involves a
+  choice, not a statement of what will happen next.
+
+Do not paste whole files, whole diffs, or large excerpts unless
+specifically requested.
