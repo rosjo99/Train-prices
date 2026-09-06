@@ -1,20 +1,5 @@
 """Diagnostic: can Camoufox reach CrossCountry's booking site?
-Mirrors scripts/probe_camoufox_tpe.py's approach and output shape, for a
-CrossCountry deep-link instead of TPE's. This exists to answer one
-question: does CrossCountry's Cloudflare protection (confirmed via plain
-curl — see docs/plans/006-cross-country-feasibility.md if one gets
-written) also block a real GitHub-Actions-hosted Camoufox browser, or only
-non-JS requests? A curl request from this repo's dev environment got a
-Cloudflare "Sorry, you have been blocked" page on both the deep-link URL
-and the bare homepage — this probe re-tests that from an actual GitHub
-Actions runner IP with real JS execution, since a WAF block on a
-datacenter/cloud IP range would apply regardless of browser fidelity.
-Usage:
-    python scripts/probe_camoufox_crosscountry.py --out-dir /tmp/camoufox-probe-cc
-Optional:
-    python scripts/probe_camoufox_crosscountry.py \
-        --out-dir /tmp/camoufox-probe-cc \
-        --headed
+Faster version – should finish in ~1.5–2.5 min even on slow runners.
 """
 from __future__ import annotations
 import argparse
@@ -24,13 +9,9 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 from camoufox.sync_api import Camoufox, NewContext
-from playwright.sync_api import Browser, BrowserContext, Page
+from playwright.sync_api import BrowserContext, Page
 
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
 DEEP_LINK = (
     "https://buy.crosscountrytrains.co.uk/search"
     "?origin=GBOXF&destination=GBQQP&adults=1&children=0"
@@ -41,68 +22,46 @@ DEEP_LINK = (
 HOMEPAGE = "https://www.crosscountrytrains.co.uk/"
 
 STRONG_BLOCK_MARKERS = (
-    "are you a robot",
-    "access denied",
-    "sorry, you have been blocked",
-    "attention required",
-    "just a moment",
-    "cf-browser-verification",
-    "challenge-platform",
-    "enable javascript and cookies to continue",
-    "verify you are human",
-    "checking your browser",
+    "are you a robot", "access denied", "sorry, you have been blocked",
+    "attention required", "just a moment", "cf-browser-verification",
+    "challenge-platform", "enable javascript and cookies to continue",
+    "verify you are human", "checking your browser",
     "performing security verification",
 )
-WEAK_MARKERS = (
-    "captcha",
-    "datadome",
-)
+WEAK_MARKERS = ("captcha", "datadome")
 JOURNEY_MARKERS = (
-    "oxford",
-    "paddington",
-    "depart",
-    "arrive",
-    "journey",
-    "ticket",
-    "adult",
-    "return",
-    "single",
-    "£",
+    "oxford", "paddington", "depart", "arrive", "journey",
+    "ticket", "adult", "return", "single", "£",
 )
-MIN_DELAY = 3.0
-MAX_DELAY = 8.0
-PAGE_LOAD_TIMEOUT = 60_000
+PAGE_LOAD_TIMEOUT = 45_000  # slightly tighter
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-def human_delay(min_s: float = MIN_DELAY, max_s: float = MAX_DELAY) -> None:
+def human_delay(min_s: float = 1.0, max_s: float = 2.5) -> None:
     time.sleep(random.uniform(min_s, max_s))
 
-def random_mouse_move(page: Page, steps: int = 8) -> None:
+def random_mouse_move(page: Page, steps: int = 5) -> None:
     viewport = page.viewport_size or {"width": 1366, "height": 768}
-    x = random.randint(100, min(400, viewport["width"] - 20))
-    y = random.randint(100, min(400, viewport["height"] - 20))
+    x = random.randint(80, min(350, viewport["width"] - 20))
+    y = random.randint(80, min(350, viewport["height"] - 20))
     for _ in range(steps):
-        x += random.randint(-60, 100)
-        y += random.randint(-40, 70)
+        x += random.randint(-50, 80)
+        y += random.randint(-30, 50)
         x = max(10, min(viewport["width"] - 10, x))
         y = max(10, min(viewport["height"] - 10, y))
         page.mouse.move(x, y)
-        time.sleep(random.uniform(0.05, 0.15))
+        time.sleep(random.uniform(0.04, 0.12))
 
 def human_interaction(page: Page) -> None:
     try:
         random_mouse_move(page)
-        human_delay(0.8, 2.0)
+        human_delay(0.4, 1.0)
         viewport = page.viewport_size or {"width": 1366, "height": 768}
         page.mouse.move(
-            viewport["width"] // 2 + random.randint(-80, 80),
-            viewport["height"] // 3 + random.randint(-40, 40),
+            viewport["width"] // 2 + random.randint(-60, 60),
+            viewport["height"] // 3 + random.randint(-30, 30),
         )
-        time.sleep(random.uniform(0.5, 1.2))
-        page.mouse.wheel(0, random.randint(150, 450))
-        human_delay(0.8, 2.0)
+        time.sleep(random.uniform(0.3, 0.7))
+        page.mouse.wheel(0, random.randint(100, 300))
+        human_delay(0.4, 1.0)
     except Exception as exc:
         print(f"[warn] Interaction failed: {exc}", file=sys.stderr)
 
@@ -115,54 +74,38 @@ def marker_contexts(text: str, markers: tuple[str, ...]) -> list[dict[str, str]]
             pos = lowered.find(marker, start)
             if pos == -1:
                 break
-            left = max(0, pos - 250)
-            right = min(len(text), pos + len(marker) + 500)
-            results.append(
-                {
-                    "marker": marker,
-                    "snippet": text[left:right].replace("\n", " ")[:750],
-                }
-            )
+            left = max(0, pos - 200)
+            right = min(len(text), pos + len(marker) + 400)
+            results.append({
+                "marker": marker,
+                "snippet": text[left:right].replace("\n", " ")[:600],
+            })
             start = pos + len(marker)
-            if len(results) >= 20:
+            if len(results) >= 15:
                 return results
     return results
 
 def summarise_responses(responses: list[dict[str, Any]]) -> dict[str, Any]:
     status_counts: dict[str, int] = {}
-    for response in responses:
-        key = str(response["status"])
+    for r in responses:
+        key = str(r["status"])
         status_counts[key] = status_counts.get(key, 0) + 1
-    interesting = []
-    for response in responses:
-        url = response["url"].lower()
-        if (
-            response["status"] >= 400
-            or any(
-                token in url
-                for token in (
-                    "/api/",
-                    "graphql",
-                    "journey",
-                    "search",
-                    "availability",
-                    "booking",
-                    "fare",
-                    "ajax",
-                )
-            )
-        ):
-            interesting.append(response)
+    interesting = [
+        r for r in responses
+        if r["status"] >= 400 or any(
+            t in r["url"].lower()
+            for t in ("/api/", "graphql", "journey", "search", "availability", "booking", "fare", "ajax")
+        )
+    ]
     return {
         "total_responses": len(responses),
         "status_counts": status_counts,
-        "interesting_responses": interesting[:100],
+        "interesting_responses": interesting[:80],
     }
 
 def get_browser_fingerprint(page: Page) -> dict[str, Any]:
     try:
-        return page.evaluate(
-            """
+        return page.evaluate("""
             () => ({
                 userAgent: navigator.userAgent,
                 platform: navigator.platform,
@@ -173,64 +116,45 @@ def get_browser_fingerprint(page: Page) -> dict[str, Any]:
                 deviceMemory: navigator.deviceMemory ?? null,
                 maxTouchPoints: navigator.maxTouchPoints,
                 screen: {
-                    width: screen.width,
-                    height: screen.height,
-                    availWidth: screen.availWidth,
-                    availHeight: screen.availHeight,
-                    colorDepth: screen.colorDepth,
-                    pixelDepth: screen.pixelDepth
+                    width: screen.width, height: screen.height,
+                    availWidth: screen.availWidth, availHeight: screen.availHeight,
+                    colorDepth: screen.colorDepth, pixelDepth: screen.pixelDepth
                 },
                 timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
                 viewport: {
-                    width: window.innerWidth,
-                    height: window.innerHeight,
+                    width: window.innerWidth, height: window.innerHeight,
                     devicePixelRatio: window.devicePixelRatio
                 }
             })
-            """
-        )
+        """)
     except Exception as exc:
         return {"error": str(exc)}
 
 def still_on_challenge(page: Page) -> bool:
-    """Return True if the page still looks like a Cloudflare challenge."""
     try:
         title = (page.title() or "").lower()
         if "just a moment" in title:
             return True
-        text = page.locator("body").inner_text(timeout=3000).lower()
-        return any(
-            m in text
-            for m in (
-                "performing security verification",
-                "verify you are human",
-                "checking your browser",
-                "just a moment",
-                "enable javascript and cookies to continue",
-            )
-        )
+        text = page.locator("body").inner_text(timeout=2500).lower()
+        return any(m in text for m in (
+            "performing security verification", "verify you are human",
+            "checking your browser", "just a moment",
+            "enable javascript and cookies to continue",
+        ))
     except Exception:
         return True
 
-def page_assessment(
-    *,
-    title: str,
-    visible_text: str,
-    final_url: str,
-    responses: list[dict[str, Any]],
-) -> dict[str, Any]:
+def page_assessment(*, title: str, visible_text: str, final_url: str, responses: list[dict[str, Any]]) -> dict[str, Any]:
     lowered = visible_text.lower()
     title_l = (title or "").lower()
-    strong_hits = [marker for marker in STRONG_BLOCK_MARKERS if marker in lowered]
+    strong_hits = [m for m in STRONG_BLOCK_MARKERS if m in lowered]
     if "just a moment" in title_l and "just a moment" not in strong_hits:
         strong_hits.append("just a moment")
     if "performing security verification" in lowered and "performing security verification" not in strong_hits:
         strong_hits.append("performing security verification")
-    weak_hits = [marker for marker in WEAK_MARKERS if marker in lowered]
-    journey_hits = [marker for marker in JOURNEY_MARKERS if marker in lowered]
-    error_statuses = sorted(
-        {response["status"] for response in responses if response["status"] >= 400}
-    )
+    weak_hits = [m for m in WEAK_MARKERS if m in lowered]
+    journey_hits = [m for m in JOURNEY_MARKERS if m in lowered]
+    error_statuses = sorted({r["status"] for r in responses if r["status"] >= 400})
     if strong_hits:
         classification = "challenge_or_block"
     elif not journey_hits and error_statuses:
@@ -251,238 +175,175 @@ def page_assessment(
     }
 
 def _do_mouse_click(page: Page, x: float, y: float) -> None:
-    page.mouse.move(x, y, steps=random.randint(8, 16))
-    time.sleep(random.uniform(0.06, 0.20))
-    page.mouse.click(x, y, delay=random.randint(50, 110))
+    page.mouse.move(x, y, steps=random.randint(6, 12))
+    time.sleep(random.uniform(0.05, 0.15))
+    page.mouse.click(x, y, delay=random.randint(40, 90))
 
 def try_click_challenge_checkbox(page: Page, out_dir: Path, label: str) -> dict[str, Any]:
-    """
-    Patiently wait for the real Cloudflare Turnstile iframe, click the
-    checkbox, then poll until the challenge page clears (or timeout).
-    Falls back to outer containers only after the real iframe has had
-    time to appear. Saves an intermediate screenshot after the click.
-    """
     info: dict[str, Any] = {
-        "attempted": True,
-        "delay_s": None,
-        "clicked": False,
-        "method": None,
-        "click_coords": None,
-        "attempts": 0,
-        "frames_seen": [],
-        "challenge_cleared": False,
-        "error": None,
+        "attempted": True, "delay_s": None, "clicked": False,
+        "method": None, "click_coords": None, "attempts": 0,
+        "frames_seen": [], "challenge_cleared": False, "error": None,
     }
     try:
-        delay = random.uniform(1.0, 3.0)
+        delay = random.uniform(1.0, 2.5)
         info["delay_s"] = round(delay, 3)
-        print(f"[info] Challenge checkbox: initial sleep {info['delay_s']:.2f}s")
+        print(f"[info] Challenge: initial sleep {info['delay_s']:.2f}s")
         time.sleep(delay)
 
-        # Prefer the real CF iframe for the first many attempts.
-        # Only after that do we try outer/fallback selectors.
-        PREFER_IFRAME_ATTEMPTS = 12
-        MAX_ATTEMPTS = 20
+        PREFER_IFRAME = 8
+        MAX_ATTEMPTS = 10
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
             info["attempts"] = attempt
-            frames_this_round: list[str] = []
+            frames_this: list[str] = []
             cf_frame = None
 
             for frame in page.frames:
                 furl = (frame.url or "").strip()
                 if furl:
-                    frames_this_round.append(furl[:140])
+                    frames_this.append(furl[:130])
                 if furl.startswith("https://challenges.cloudflare.com"):
                     cf_frame = frame
 
-            info["frames_seen"] = frames_this_round[-10:]
+            info["frames_seen"] = frames_this[-8:]
 
-            # ----- 1. Real challenges.cloudflare.com iframe (preferred) -----
+            # 1. Prefer real CF iframe
             if cf_frame is not None:
                 try:
-                    frame_el = cf_frame.frame_element()
-                    box = frame_el.bounding_box()
+                    box = cf_frame.frame_element().bounding_box()
                     if box and box.get("width", 0) >= 20 and box.get("height", 0) >= 20:
-                        click_x = box["x"] + (box["width"] / 9.0)
-                        click_y = box["y"] + (box["height"] / 2.0)
-                        print(
-                            f"[info] Attempt {attempt}: CF iframe "
-                            f"{box['width']:.0f}x{box['height']:.0f} → "
-                            f"click ({click_x:.1f}, {click_y:.1f})"
-                        )
-                        _do_mouse_click(page, click_x, click_y)
-                        info["clicked"] = True
-                        info["method"] = "iframe_bbox_offset"
-                        info["click_coords"] = [round(click_x, 1), round(click_y, 1)]
+                        cx = box["x"] + box["width"] / 9.0
+                        cy = box["y"] + box["height"] / 2.0
+                        print(f"[info] Attempt {attempt}: CF iframe {box['width']:.0f}x{box['height']:.0f} → ({cx:.1f},{cy:.1f})")
+                        _do_mouse_click(page, cx, cy)
+                        info.update(clicked=True, method="iframe_bbox_offset",
+                                    click_coords=[round(cx, 1), round(cy, 1)])
                         break
-                except Exception as frame_exc:
-                    print(
-                        f"[warn] iframe click failed (attempt {attempt}): {frame_exc}",
-                        file=sys.stderr,
-                    )
+                except Exception as e:
+                    print(f"[warn] iframe click fail (att {attempt}): {e}", file=sys.stderr)
 
-            # ----- 2. Only after the preferred window, try outer containers -----
-            if attempt > PREFER_IFRAME_ATTEMPTS:
-                outer_selectors = [
+            # 2. Outer / fallback only after preferred window
+            if attempt > PREFER_IFRAME:
+                for sel in (
                     "iframe[src*='challenges.cloudflare.com']",
-                    ".cf-turnstile",
-                    ".cf-turnstile-wrapper",
-                    "#cf-turnstile",
-                    "div[id*='turnstile']",
-                    "div[class*='turnstile']",
-                    ".main-content p + div > div > div",
-                ]
-                for sel in outer_selectors:
+                    ".cf-turnstile", ".cf-turnstile-wrapper", "#cf-turnstile",
+                    "div[class*='turnstile']", ".main-content p + div > div > div",
+                ):
                     try:
                         loc = page.locator(sel).last
                         if loc.count() == 0:
                             continue
-                        box = loc.bounding_box(timeout=600)
+                        box = loc.bounding_box(timeout=500)
                         if not box or box["width"] < 15:
                             continue
-                        # Prefer left-side checkbox offset when the box is wide enough
-                        if box["width"] > 80:
-                            click_x = box["x"] + (box["width"] / 9.0)
-                            click_y = box["y"] + (box["height"] / 2.0)
+                        if box["width"] > 70:
+                            cx = box["x"] + box["width"] / 9.0
+                            cy = box["y"] + box["height"] / 2.0
                         else:
-                            click_x = box["x"] + 26
-                            click_y = box["y"] + max(20, box["height"] / 2.0)
-                        print(
-                            f"[info] Attempt {attempt}: outer {sel!r} → "
-                            f"click ({click_x:.1f}, {click_y:.1f})"
-                        )
-                        _do_mouse_click(page, click_x, click_y)
-                        info["clicked"] = True
-                        info["method"] = f"outer:{sel}"
-                        info["click_coords"] = [round(click_x, 1), round(click_y, 1)]
+                            cx = box["x"] + 26
+                            cy = box["y"] + max(18, box["height"] / 2)
+                        print(f"[info] Attempt {attempt}: outer {sel!r} → ({cx:.1f},{cy:.1f})")
+                        _do_mouse_click(page, cx, cy)
+                        info.update(clicked=True, method=f"outer:{sel}",
+                                    click_coords=[round(cx, 1), round(cy, 1)])
                         break
                     except Exception:
                         continue
                 if info["clicked"]:
                     break
 
-                # Last-resort: fixed click near typical widget position
+                # Fixed fallback
                 try:
                     vp = page.viewport_size or {"width": 1366, "height": 768}
-                    # Common location for the interstitial widget
-                    click_x = vp["width"] * 0.5 - 120
-                    click_y = vp["height"] * 0.45
-                    print(
-                        f"[info] Attempt {attempt}: fixed fallback → "
-                        f"click ({click_x:.1f}, {click_y:.1f})"
-                    )
-                    _do_mouse_click(page, click_x, click_y)
-                    info["clicked"] = True
-                    info["method"] = "fixed_fallback"
-                    info["click_coords"] = [round(click_x, 1), round(click_y, 1)]
+                    cx, cy = vp["width"] * 0.5 - 110, vp["height"] * 0.42
+                    print(f"[info] Attempt {attempt}: fixed → ({cx:.1f},{cy:.1f})")
+                    _do_mouse_click(page, cx, cy)
+                    info.update(clicked=True, method="fixed_fallback",
+                                click_coords=[round(cx, 1), round(cy, 1)])
                     break
                 except Exception:
                     pass
 
             if attempt < MAX_ATTEMPTS:
-                time.sleep(1.0)
+                time.sleep(0.9)
 
-        # Intermediate screenshot right after the click attempt
+        # Intermediate screenshot
         try:
-            page.screenshot(
-                path=str(out_dir / f"{label}-after-click.png"), full_page=True
-            )
+            page.screenshot(path=str(out_dir / f"{label}-after-click.png"), full_page=True)
             print(f"[info] Saved {label}-after-click.png")
-        except Exception as shot_exc:
-            print(f"[warn] after-click screenshot failed: {shot_exc}", file=sys.stderr)
+        except Exception as e:
+            print(f"[warn] after-click shot failed: {e}", file=sys.stderr)
 
         if not info["clicked"]:
-            print("[info] No clickable Cloudflare challenge widget found")
+            print("[info] No widget found to click")
             info["method"] = "none_found"
             return info
 
-        # ----- Wait for the challenge to clear -----
-        print("[info] Waiting for challenge to clear…")
-        for i in range(20):
+        # Short wait for challenge to clear
+        print("[info] Waiting up to 8s for challenge clear…")
+        for i in range(8):
             time.sleep(1.0)
             if not still_on_challenge(page):
                 info["challenge_cleared"] = True
-                print(f"[info] Challenge cleared after ~{i + 1}s")
+                print(f"[info] Cleared after ~{i+1}s")
                 break
         else:
-            print("[info] Challenge still present after wait")
+            print("[info] Still on challenge after 8s")
 
     except Exception as exc:
         info["error"] = repr(exc)
-        print(f"[warn] try_click_challenge_checkbox failed: {exc}", file=sys.stderr)
+        print(f"[warn] try_click failed: {exc}", file=sys.stderr)
     return info
 
-# ---------------------------------------------------------------------------
-# Probe
-# ---------------------------------------------------------------------------
-def probe(
-    context: BrowserContext,
-    url: str,
-    label: str,
-    out_dir: Path,
-) -> dict[str, Any]:
+def probe(context: BrowserContext, url: str, label: str, out_dir: Path) -> dict[str, Any]:
     page = context.new_page()
     responses: list[dict[str, Any]] = []
 
     def on_response(response: Any) -> None:
         try:
-            responses.append(
-                {
-                    "status": response.status,
-                    "method": response.request.method,
-                    "resource_type": response.request.resource_type,
-                    "url": response.url,
-                }
-            )
+            responses.append({
+                "status": response.status,
+                "method": response.request.method,
+                "resource_type": response.request.resource_type,
+                "url": response.url,
+            })
         except Exception:
             pass
 
     page.on("response", on_response)
-    result: dict[str, Any] = {
-        "label": label,
-        "url": url,
-    }
+    result: dict[str, Any] = {"label": label, "url": url}
+
     try:
         print(f"[info] Navigating {label}: {url}")
-        human_delay(1.5, 3.0)
-        response = page.goto(
-            url,
-            wait_until="domcontentloaded",
-            timeout=PAGE_LOAD_TIMEOUT,
-        )
+        human_delay(1.0, 2.0)
+        response = page.goto(url, wait_until="domcontentloaded", timeout=PAGE_LOAD_TIMEOUT)
         result["initial_http_status"] = response.status if response else None
-        human_delay(4.0, 7.0)
+
+        human_delay(2.5, 4.0)
         human_interaction(page)
-        human_delay(2.0, 4.0)
+        human_delay(1.5, 2.5)
 
-        # Attempt to clear Cloudflare / Turnstile challenge
         result["challenge_click"] = try_click_challenge_checkbox(page, out_dir, label)
-
-        # Final settle
-        human_delay(2.0, 4.0)
+        human_delay(1.5, 2.5)
 
         result["final_url"] = page.url
         result["title"] = page.title()
         html = page.content()
         try:
-            visible_text = page.locator("body").inner_text(timeout=10_000)
+            visible_text = page.locator("body").inner_text(timeout=8_000)
         except Exception:
             visible_text = ""
         result["content_length"] = len(html)
         result["visible_text_length"] = len(visible_text)
-        result["visible_text_preview"] = visible_text[:5000]
+        result["visible_text_preview"] = visible_text[:4000]
         result["fingerprint"] = get_browser_fingerprint(page)
         result["response_summary"] = summarise_responses(responses)
-        result["strong_marker_contexts"] = marker_contexts(
-            visible_text, STRONG_BLOCK_MARKERS
-        )
+        result["strong_marker_contexts"] = marker_contexts(visible_text, STRONG_BLOCK_MARKERS)
         result["weak_marker_contexts"] = marker_contexts(visible_text, WEAK_MARKERS)
         result["assessment"] = page_assessment(
-            title=result["title"],
-            visible_text=visible_text,
-            final_url=result["final_url"],
-            responses=responses,
+            title=result["title"], visible_text=visible_text,
+            final_url=result["final_url"], responses=responses,
         )
         (out_dir / f"{label}.html").write_text(html, encoding="utf-8")
         (out_dir / f"{label}.txt").write_text(visible_text, encoding="utf-8")
@@ -492,11 +353,9 @@ def probe(
         )
         result["ok"] = True
         print(
-            f"[info] {label}: "
-            f"{result['assessment']['classification']}; "
-            f"title={result['title']!r}; "
-            f"status={result['initial_http_status']}; "
-            f"challenge_click={result['challenge_click']}"
+            f"[info] {label}: {result['assessment']['classification']}; "
+            f"title={result['title']!r}; status={result['initial_http_status']}; "
+            f"challenge={result['challenge_click']}"
         )
     except Exception as exc:
         result["ok"] = False
@@ -511,15 +370,10 @@ def probe(
         page.close()
     return result
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out-dir", default="/tmp/camoufox-probe-cc")
-    parser.add_argument(
-        "--headed", action="store_true", help="Run with a visible browser window."
-    )
+    parser.add_argument("--headed", action="store_true")
     args = parser.parse_args()
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -532,6 +386,7 @@ def main() -> int:
     }
     print(f"[info] Browser=Camoufox config={camoufox_config}")
     results: list[dict[str, Any]] = []
+
     try:
         with Camoufox(**camoufox_config) as browser:
             context = NewContext(
@@ -545,25 +400,17 @@ def main() -> int:
             )
             try:
                 results.append(probe(context, HOMEPAGE, "homepage", out_dir))
-                human_delay(5.0, 10.0)
+                human_delay(3.0, 5.0)
                 results.append(probe(context, DEEP_LINK, "deep-link", out_dir))
             finally:
                 context.close()
     except Exception as exc:
-        error = {
-            "ok": False,
-            "stage": "camoufox_launch",
-            "error": repr(exc),
-        }
+        error = {"ok": False, "stage": "camoufox_launch", "error": repr(exc)}
         results.append(error)
-        (out_dir / "launch-error.json").write_text(
-            json.dumps(error, indent=2), encoding="utf-8"
-        )
+        (out_dir / "launch-error.json").write_text(json.dumps(error, indent=2), encoding="utf-8")
         print(f"[error] Camoufox launch failed: {exc}", file=sys.stderr)
-    summary = {
-        "browser": "Camoufox",
-        "results": results,
-    }
+
+    summary = {"browser": "Camoufox", "results": results}
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(json.dumps(summary, indent=2))
     return 0
