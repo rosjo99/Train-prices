@@ -40,9 +40,6 @@ DEEP_LINK = (
 )
 HOMEPAGE = "https://www.crosscountrytrains.co.uk/"
 
-# Same vocabulary as scripts/probe_camoufox_tpe.py, plus the exact phrases
-# observed on the curl-fetched Cloudflare block page for this site
-# ("Attention Required! | Cloudflare", "Sorry, you have been blocked").
 STRONG_BLOCK_MARKERS = (
     "are you a robot",
     "access denied",
@@ -195,6 +192,26 @@ def get_browser_fingerprint(page: Page) -> dict[str, Any]:
     except Exception as exc:
         return {"error": str(exc)}
 
+def still_on_challenge(page: Page) -> bool:
+    """Return True if the page still looks like a Cloudflare challenge."""
+    try:
+        title = (page.title() or "").lower()
+        if "just a moment" in title:
+            return True
+        text = page.locator("body").inner_text(timeout=3000).lower()
+        return any(
+            m in text
+            for m in (
+                "performing security verification",
+                "verify you are human",
+                "checking your browser",
+                "just a moment",
+                "enable javascript and cookies to continue",
+            )
+        )
+    except Exception:
+        return True
+
 def page_assessment(
     *,
     title: str,
@@ -233,25 +250,27 @@ def page_assessment(
         "looks_like_journey_content": len(journey_hits) >= 3,
     }
 
-def try_click_challenge_checkbox(page: Page) -> dict[str, Any]:
+def _do_mouse_click(page: Page, x: float, y: float) -> None:
+    page.mouse.move(x, y, steps=random.randint(8, 16))
+    time.sleep(random.uniform(0.06, 0.20))
+    page.mouse.click(x, y, delay=random.randint(50, 110))
+
+def try_click_challenge_checkbox(page: Page, out_dir: Path, label: str) -> dict[str, Any]:
     """
-    Wait a random 1–3 s, then repeatedly scan for the Cloudflare Turnstile /
-    managed-challenge iframe and click the checkbox.
-    Primary strategy (works with Camoufox):
-      - loop for up to ~15 s
-      - find any frame whose URL starts with https://challenges.cloudflare.com
-      - take frame_element().bounding_box()
-      - click at (x + width/9, y + height/2)  ← classic checkbox location
-    Also tries a few outer-page containers used by the “Just a moment…”
-    interstitial, and common selectors as last resorts.
+    Patiently wait for the real Cloudflare Turnstile iframe, click the
+    checkbox, then poll until the challenge page clears (or timeout).
+    Falls back to outer containers only after the real iframe has had
+    time to appear. Saves an intermediate screenshot after the click.
     """
     info: dict[str, Any] = {
         "attempted": True,
         "delay_s": None,
         "clicked": False,
         "method": None,
+        "click_coords": None,
         "attempts": 0,
         "frames_seen": [],
+        "challenge_cleared": False,
         "error": None,
     }
     try:
@@ -260,120 +279,135 @@ def try_click_challenge_checkbox(page: Page) -> dict[str, Any]:
         print(f"[info] Challenge checkbox: initial sleep {info['delay_s']:.2f}s")
         time.sleep(delay)
 
-        max_attempts = 15
-        for attempt in range(1, max_attempts + 1):
+        # Prefer the real CF iframe for the first many attempts.
+        # Only after that do we try outer/fallback selectors.
+        PREFER_IFRAME_ATTEMPTS = 12
+        MAX_ATTEMPTS = 20
+
+        for attempt in range(1, MAX_ATTEMPTS + 1):
             info["attempts"] = attempt
             frames_this_round: list[str] = []
+            cf_frame = None
 
-            # ----- 1. Scan all frames for the Cloudflare challenge iframe -----
             for frame in page.frames:
                 furl = (frame.url or "").strip()
-                if not furl:
-                    continue
-                frames_this_round.append(furl[:120])
-                if not furl.startswith("https://challenges.cloudflare.com"):
-                    continue
+                if furl:
+                    frames_this_round.append(furl[:140])
+                if furl.startswith("https://challenges.cloudflare.com"):
+                    cf_frame = frame
 
+            info["frames_seen"] = frames_this_round[-10:]
+
+            # ----- 1. Real challenges.cloudflare.com iframe (preferred) -----
+            if cf_frame is not None:
                 try:
-                    frame_el = frame.frame_element()
+                    frame_el = cf_frame.frame_element()
                     box = frame_el.bounding_box()
-                    if not box or box.get("width", 0) < 20 or box.get("height", 0) < 20:
-                        continue
-
-                    # Checkbox is on the left side of the widget
-                    click_x = box["x"] + (box["width"] / 9.0)
-                    click_y = box["y"] + (box["height"] / 2.0)
-
-                    print(
-                        f"[info] Attempt {attempt}: CF iframe found "
-                        f"({box['width']:.0f}x{box['height']:.0f}) → "
-                        f"click ({click_x:.1f}, {click_y:.1f})"
-                    )
-                    page.mouse.move(click_x, click_y, steps=random.randint(6, 14))
-                    time.sleep(random.uniform(0.05, 0.18))
-                    page.mouse.click(click_x, click_y, delay=random.randint(40, 90))
-
-                    info["clicked"] = True
-                    info["method"] = "iframe_bbox_offset"
-                    info["frames_seen"] = frames_this_round[-8:]
-                    # Give Turnstile time to process the click
-                    time.sleep(random.uniform(3.0, 5.5))
-                    return info
-                except Exception as frame_exc:
-                    print(
-                        f"[warn] Frame click failed (attempt {attempt}): {frame_exc}",
-                        file=sys.stderr,
-                    )
-                    continue
-
-            # ----- 2. Outer interstitial containers (Just a moment…) -----
-            outer_selectors = [
-                ".main-content p + div > div > div",
-                "#cf-turnstile",
-                ".cf-turnstile",
-                ".cf-turnstile-wrapper",
-                "div[id*='turnstile']",
-                "div[class*='turnstile']",
-            ]
-            for sel in outer_selectors:
-                try:
-                    loc = page.locator(sel).last
-                    if loc.count() == 0:
-                        continue
-                    box = loc.bounding_box(timeout=800)
-                    if not box or box["width"] < 20:
-                        continue
-                    # Fixed offset that hits the checkbox on many interstitial layouts
-                    click_x = box["x"] + 26
-                    click_y = box["y"] + 25
-                    print(
-                        f"[info] Attempt {attempt}: outer selector {sel!r} → "
-                        f"click ({click_x:.1f}, {click_y:.1f})"
-                    )
-                    page.mouse.move(click_x, click_y, steps=random.randint(5, 12))
-                    time.sleep(random.uniform(0.05, 0.15))
-                    page.mouse.click(click_x, click_y, delay=random.randint(40, 90))
-                    info["clicked"] = True
-                    info["method"] = f"outer:{sel}"
-                    info["frames_seen"] = frames_this_round[-8:]
-                    time.sleep(random.uniform(3.0, 5.5))
-                    return info
-                except Exception:
-                    continue
-
-            # ----- 3. Direct iframe element via locator -----
-            try:
-                iframe_loc = page.locator(
-                    "iframe[src*='challenges.cloudflare.com'], "
-                    "iframe[title*='Cloudflare'], "
-                    "iframe[title*='security challenge']"
-                ).first
-                if iframe_loc.count() > 0:
-                    box = iframe_loc.bounding_box(timeout=800)
-                    if box and box["width"] >= 20:
+                    if box and box.get("width", 0) >= 20 and box.get("height", 0) >= 20:
                         click_x = box["x"] + (box["width"] / 9.0)
                         click_y = box["y"] + (box["height"] / 2.0)
                         print(
-                            f"[info] Attempt {attempt}: iframe locator → "
+                            f"[info] Attempt {attempt}: CF iframe "
+                            f"{box['width']:.0f}x{box['height']:.0f} → "
                             f"click ({click_x:.1f}, {click_y:.1f})"
                         )
-                        page.mouse.move(click_x, click_y, steps=random.randint(5, 12))
-                        time.sleep(random.uniform(0.05, 0.15))
-                        page.mouse.click(click_x, click_y, delay=random.randint(40, 90))
+                        _do_mouse_click(page, click_x, click_y)
                         info["clicked"] = True
-                        info["method"] = "iframe_locator"
-                        info["frames_seen"] = frames_this_round[-8:]
-                        time.sleep(random.uniform(3.0, 5.5))
-                        return info
-            except Exception:
-                pass
+                        info["method"] = "iframe_bbox_offset"
+                        info["click_coords"] = [round(click_x, 1), round(click_y, 1)]
+                        break
+                except Exception as frame_exc:
+                    print(
+                        f"[warn] iframe click failed (attempt {attempt}): {frame_exc}",
+                        file=sys.stderr,
+                    )
 
-            info["frames_seen"] = frames_this_round[-8:]
-            if attempt < max_attempts:
+            # ----- 2. Only after the preferred window, try outer containers -----
+            if attempt > PREFER_IFRAME_ATTEMPTS:
+                outer_selectors = [
+                    "iframe[src*='challenges.cloudflare.com']",
+                    ".cf-turnstile",
+                    ".cf-turnstile-wrapper",
+                    "#cf-turnstile",
+                    "div[id*='turnstile']",
+                    "div[class*='turnstile']",
+                    ".main-content p + div > div > div",
+                ]
+                for sel in outer_selectors:
+                    try:
+                        loc = page.locator(sel).last
+                        if loc.count() == 0:
+                            continue
+                        box = loc.bounding_box(timeout=600)
+                        if not box or box["width"] < 15:
+                            continue
+                        # Prefer left-side checkbox offset when the box is wide enough
+                        if box["width"] > 80:
+                            click_x = box["x"] + (box["width"] / 9.0)
+                            click_y = box["y"] + (box["height"] / 2.0)
+                        else:
+                            click_x = box["x"] + 26
+                            click_y = box["y"] + max(20, box["height"] / 2.0)
+                        print(
+                            f"[info] Attempt {attempt}: outer {sel!r} → "
+                            f"click ({click_x:.1f}, {click_y:.1f})"
+                        )
+                        _do_mouse_click(page, click_x, click_y)
+                        info["clicked"] = True
+                        info["method"] = f"outer:{sel}"
+                        info["click_coords"] = [round(click_x, 1), round(click_y, 1)]
+                        break
+                    except Exception:
+                        continue
+                if info["clicked"]:
+                    break
+
+                # Last-resort: fixed click near typical widget position
+                try:
+                    vp = page.viewport_size or {"width": 1366, "height": 768}
+                    # Common location for the interstitial widget
+                    click_x = vp["width"] * 0.5 - 120
+                    click_y = vp["height"] * 0.45
+                    print(
+                        f"[info] Attempt {attempt}: fixed fallback → "
+                        f"click ({click_x:.1f}, {click_y:.1f})"
+                    )
+                    _do_mouse_click(page, click_x, click_y)
+                    info["clicked"] = True
+                    info["method"] = "fixed_fallback"
+                    info["click_coords"] = [round(click_x, 1), round(click_y, 1)]
+                    break
+                except Exception:
+                    pass
+
+            if attempt < MAX_ATTEMPTS:
                 time.sleep(1.0)
 
-        print("[info] No clickable Cloudflare challenge widget found after retries")
-        info["method"] = "none_found"
+        # Intermediate screenshot right after the click attempt
+        try:
+            page.screenshot(
+                path=str(out_dir / f"{label}-after-click.png"), full_page=True
+            )
+            print(f"[info] Saved {label}-after-click.png")
+        except Exception as shot_exc:
+            print(f"[warn] after-click screenshot failed: {shot_exc}", file=sys.stderr)
+
+        if not info["clicked"]:
+            print("[info] No clickable Cloudflare challenge widget found")
+            info["method"] = "none_found"
+            return info
+
+        # ----- Wait for the challenge to clear -----
+        print("[info] Waiting for challenge to clear…")
+        for i in range(20):
+            time.sleep(1.0)
+            if not still_on_challenge(page):
+                info["challenge_cleared"] = True
+                print(f"[info] Challenge cleared after ~{i + 1}s")
+                break
+        else:
+            print("[info] Challenge still present after wait")
+
     except Exception as exc:
         info["error"] = repr(exc)
         print(f"[warn] try_click_challenge_checkbox failed: {exc}", file=sys.stderr)
@@ -420,13 +454,12 @@ def probe(
         result["initial_http_status"] = response.status if response else None
         human_delay(4.0, 7.0)
         human_interaction(page)
-        human_delay(3.0, 6.0)
+        human_delay(2.0, 4.0)
 
-        # Attempt to clear a visible Cloudflare / Turnstile tickbox
-        # (especially relevant for the deep-link page).
-        result["challenge_click"] = try_click_challenge_checkbox(page)
+        # Attempt to clear Cloudflare / Turnstile challenge
+        result["challenge_click"] = try_click_challenge_checkbox(page, out_dir, label)
 
-        # Extra settle time after a possible challenge solve
+        # Final settle
         human_delay(2.0, 4.0)
 
         result["final_url"] = page.url
@@ -491,10 +524,6 @@ def main() -> int:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Camoufox is Firefox-based. Let Camoufox generate a coherent
-    # fingerprint rather than injecting Chrome-specific patches. No proxy
-    # here — the point of this probe is to see how CrossCountry's
-    # Cloudflare protection treats a plain GitHub Actions runner IP.
     camoufox_config: dict[str, Any] = {
         "headless": not args.headed,
         "humanize": True,
@@ -537,8 +566,6 @@ def main() -> int:
     }
     (out_dir / "summary.json").write_text(json.dumps(summary, indent=2), encoding="utf-8")
     print(json.dumps(summary, indent=2))
-    # Keep the GitHub Actions step successful so artifacts can always be
-    # inspected, even when the diagnostic itself found a block.
     return 0
 
 if __name__ == "__main__":
