@@ -3,6 +3,8 @@
 # Cloudflare protection (confirmed blocking plain curl requests, including
 # the bare homepage) also block a real GitHub-Actions-hosted browser?
 
+name: Probe CrossCountry with Camoufox (manual diagnostic)
+
 on:
   workflow_dispatch: {}
 

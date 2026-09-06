@@ -1,6 +1,8 @@
 # Diagnostic only:
 # Does Camoufox successfully load TPE and its journey application?
 
+name: Probe TPE with Camoufox (manual diagnostic)
+
 on:
   workflow_dispatch: {}
 
