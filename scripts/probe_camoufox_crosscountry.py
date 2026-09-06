@@ -181,94 +181,155 @@ def _do_mouse_click(page: Page, x: float, y: float) -> None:
 
 def try_click_challenge_checkbox(page: Page, out_dir: Path, label: str) -> dict[str, Any]:
     info: dict[str, Any] = {
-        "attempted": True, "delay_s": None, "clicked": False,
-        "method": None, "click_coords": None, "attempts": 0,
-        "frames_seen": [], "challenge_cleared": False, "error": None,
+        "attempted": True,
+        "delay_s": None,
+        "clicked": False,
+        "method": None,
+        "click_coords": None,
+        "attempts": 0,
+        "frames_seen": [],
+        "iframe_srcs": [],
+        "challenge_cleared": False,
+        "error": None,
     }
     try:
-        delay = random.uniform(1.0, 2.5)
+        # Give Turnstile more time to appear before we start clicking
+        delay = random.uniform(3.0, 5.0)
         info["delay_s"] = round(delay, 3)
-        print(f"[info] Challenge: initial sleep {info['delay_s']:.2f}s")
+        print(f"[info] Challenge: initial sleep {info['delay_s']:.2f}s (waiting for widget)")
         time.sleep(delay)
 
-        PREFER_IFRAME = 8
-        MAX_ATTEMPTS = 10
+        # Snapshot before any click
+        try:
+            page.screenshot(path=str(out_dir / f"{label}-before-click.png"), full_page=True)
+            print(f"[info] Saved {label}-before-click.png")
+        except Exception as e:
+            print(f"[warn] before-click shot failed: {e}", file=sys.stderr)
+
+        MAX_ATTEMPTS = 12
+        clicked = False
 
         for attempt in range(1, MAX_ATTEMPTS + 1):
             info["attempts"] = attempt
             frames_this: list[str] = []
+            iframe_srcs: list[str] = []
             cf_frame = None
 
+            # Collect frame URLs
             for frame in page.frames:
                 furl = (frame.url or "").strip()
                 if furl:
-                    frames_this.append(furl[:130])
+                    frames_this.append(furl[:140])
                 if furl.startswith("https://challenges.cloudflare.com"):
                     cf_frame = frame
 
-            info["frames_seen"] = frames_this[-8:]
+            # Also collect <iframe> src attributes from the DOM
+            try:
+                iframe_srcs = page.evaluate("""
+                    () => Array.from(document.querySelectorAll('iframe'))
+                           .map(i => i.src || i.getAttribute('src') || '')
+                           .filter(Boolean)
+                """) or []
+            except Exception:
+                iframe_srcs = []
 
-            # 1. Prefer real CF iframe
+            info["frames_seen"] = frames_this[-10:]
+            info["iframe_srcs"] = [s[:120] for s in iframe_srcs][:8]
+
+            if iframe_srcs:
+                print(f"[info] Attempt {attempt}: iframe srcs = {iframe_srcs[:3]}")
+
+            # ----- 1. Real CF frame (if it ever appears) -----
             if cf_frame is not None:
                 try:
                     box = cf_frame.frame_element().bounding_box()
                     if box and box.get("width", 0) >= 20 and box.get("height", 0) >= 20:
-                        cx = box["x"] + box["width"] / 9.0
-                        cy = box["y"] + box["height"] / 2.0
-                        print(f"[info] Attempt {attempt}: CF iframe {box['width']:.0f}x{box['height']:.0f} → ({cx:.1f},{cy:.1f})")
-                        _do_mouse_click(page, cx, cy)
-                        info.update(clicked=True, method="iframe_bbox_offset",
-                                    click_coords=[round(cx, 1), round(cy, 1)])
-                        break
-                except Exception as e:
-                    print(f"[warn] iframe click fail (att {attempt}): {e}", file=sys.stderr)
-
-            # 2. Outer / fallback only after preferred window
-            if attempt > PREFER_IFRAME:
-                for sel in (
-                    "iframe[src*='challenges.cloudflare.com']",
-                    ".cf-turnstile", ".cf-turnstile-wrapper", "#cf-turnstile",
-                    "div[class*='turnstile']", ".main-content p + div > div > div",
-                ):
-                    try:
-                        loc = page.locator(sel).last
-                        if loc.count() == 0:
-                            continue
-                        box = loc.bounding_box(timeout=500)
-                        if not box or box["width"] < 15:
-                            continue
-                        if box["width"] > 70:
-                            cx = box["x"] + box["width"] / 9.0
+                        for frac in (1/9, 0.15, 0.22, 0.30):
+                            cx = box["x"] + box["width"] * frac
                             cy = box["y"] + box["height"] / 2.0
-                        else:
-                            cx = box["x"] + 26
-                            cy = box["y"] + max(18, box["height"] / 2)
+                            print(f"[info] Attempt {attempt}: CF iframe click frac={frac:.2f} → ({cx:.1f},{cy:.1f})")
+                            _do_mouse_click(page, cx, cy)
+                            time.sleep(0.8)
+                            if not still_on_challenge(page):
+                                info.update(clicked=True, method="iframe_bbox_offset",
+                                            click_coords=[round(cx,1), round(cy,1)],
+                                            challenge_cleared=True)
+                                clicked = True
+                                break
+                        if clicked:
+                            break
+                except Exception as e:
+                    print(f"[warn] iframe click fail: {e}", file=sys.stderr)
+
+            # ----- 2. Outer containers + multiple offsets -----
+            outer_selectors = [
+                "iframe[src*='challenges.cloudflare.com']",
+                ".cf-turnstile",
+                ".cf-turnstile-wrapper",
+                "#cf-turnstile",
+                "div[class*='turnstile']",
+                ".main-content p + div > div > div",
+                ".main-content div",
+            ]
+            for sel in outer_selectors:
+                try:
+                    loc = page.locator(sel).last
+                    if loc.count() == 0:
+                        continue
+                    box = loc.bounding_box(timeout=600)
+                    if not box or box["width"] < 10:
+                        continue
+
+                    # Try several left-side offsets that commonly hit the checkbox
+                    candidates = [
+                        (box["x"] + 26, box["y"] + 25),
+                        (box["x"] + 30, box["y"] + box["height"] / 2),
+                        (box["x"] + box["width"] * 0.12, box["y"] + box["height"] * 0.5),
+                        (box["x"] + 40, box["y"] + 28),
+                        (box["x"] + 22, box["y"] + 22),
+                    ]
+                    for cx, cy in candidates:
                         print(f"[info] Attempt {attempt}: outer {sel!r} → ({cx:.1f},{cy:.1f})")
                         _do_mouse_click(page, cx, cy)
-                        info.update(clicked=True, method=f"outer:{sel}",
-                                    click_coords=[round(cx, 1), round(cy, 1)])
+                        time.sleep(0.7)
+                        if not still_on_challenge(page):
+                            info.update(clicked=True, method=f"outer:{sel}",
+                                        click_coords=[round(cx,1), round(cy,1)],
+                                        challenge_cleared=True)
+                            clicked = True
+                            break
+                    if clicked:
                         break
-                    except Exception:
-                        continue
-                if info["clicked"]:
-                    break
-
-                # Fixed fallback
-                try:
-                    vp = page.viewport_size or {"width": 1366, "height": 768}
-                    cx, cy = vp["width"] * 0.5 - 110, vp["height"] * 0.42
-                    print(f"[info] Attempt {attempt}: fixed → ({cx:.1f},{cy:.1f})")
-                    _do_mouse_click(page, cx, cy)
-                    info.update(clicked=True, method="fixed_fallback",
-                                click_coords=[round(cx, 1), round(cy, 1)])
-                    break
                 except Exception:
-                    pass
+                    continue
+            if clicked:
+                break
 
-            if attempt < MAX_ATTEMPTS:
-                time.sleep(0.9)
+            # ----- 3. Fixed positions known to work on many CF interstitials -----
+            vp = page.viewport_size or {"width": 1366, "height": 768}
+            fixed_points = [
+                (vp["width"] * 0.5 - 120, vp["height"] * 0.42),
+                (210, 290),
+                (vp["width"] * 0.5 - 90, vp["height"] * 0.38),
+                (300, 320),
+                (334, 338),
+            ]
+            for cx, cy in fixed_points:
+                print(f"[info] Attempt {attempt}: fixed → ({cx:.1f},{cy:.1f})")
+                _do_mouse_click(page, cx, cy)
+                time.sleep(0.7)
+                if not still_on_challenge(page):
+                    info.update(clicked=True, method="fixed",
+                                click_coords=[round(cx,1), round(cy,1)],
+                                challenge_cleared=True)
+                    clicked = True
+                    break
+            if clicked:
+                break
 
-        # Intermediate screenshot
+            time.sleep(1.0)
+
+        # After-click screenshot
         try:
             page.screenshot(path=str(out_dir / f"{label}-after-click.png"), full_page=True)
             print(f"[info] Saved {label}-after-click.png")
@@ -276,20 +337,18 @@ def try_click_challenge_checkbox(page: Page, out_dir: Path, label: str) -> dict[
             print(f"[warn] after-click shot failed: {e}", file=sys.stderr)
 
         if not info["clicked"]:
-            print("[info] No widget found to click")
             info["method"] = "none_found"
-            return info
+            print("[info] No successful click that cleared the challenge")
 
-        # Short wait for challenge to clear
-        print("[info] Waiting up to 8s for challenge clear…")
-        for i in range(8):
-            time.sleep(1.0)
-            if not still_on_challenge(page):
-                info["challenge_cleared"] = True
-                print(f"[info] Cleared after ~{i+1}s")
-                break
-        else:
-            print("[info] Still on challenge after 8s")
+        # Final short settle
+        if info["clicked"] and not info.get("challenge_cleared"):
+            print("[info] Extra 5s wait after click…")
+            for _ in range(5):
+                time.sleep(1)
+                if not still_on_challenge(page):
+                    info["challenge_cleared"] = True
+                    print("[info] Cleared on extra wait")
+                    break
 
     except Exception as exc:
         info["error"] = repr(exc)
