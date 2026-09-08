@@ -71,7 +71,27 @@ jobs:
       # cache nothing useful, so this is dropped rather than guessed;
       # re-downloading the browser build every run is a correctness-
       # neutral cost, not a correctness risk.
-      - run: python -m camoufox fetch
+      # `camoufox fetch` exits 0 even when it fails (e.g. a transient
+      # api.github.com timeout while syncing the official repo's release
+      # list) — it just prints "not found in cache" and returns. Confirmed
+      # in run 34164218307 (2026-09-07): a 504 during that sync left no
+      # browser installed, and every scrape that run failed with
+      # "Camoufox browser not found", burning the full 30-minute budget on
+      # dates that could never succeed. So verify install state ourselves
+      # and retry a few times before giving up.
+      - name: Fetch Camoufox browser
+        run: |
+          for attempt in 1 2 3; do
+            python -m camoufox fetch
+            if python -c "from camoufox.multiversion import list_installed; import sys; sys.exit(0 if list_installed() else 1)"; then
+              echo "Camoufox browser installed."
+              exit 0
+            fi
+            echo "Camoufox browser still missing after attempt $attempt/3."
+            [ "$attempt" -lt 3 ] && sleep 15
+          done
+          echo "::error::Camoufox browser fetch failed after 3 attempts — not running the price check."
+          exit 1
       - name: Run price check
         env:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
