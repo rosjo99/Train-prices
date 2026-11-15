@@ -23941,3 +23941,5 @@ checked_at,travel_date,target_departure,actual_departure,arrival_time,price_gbp,
 2026-11-14T22:45:59.781072+00:00,2027-01-08,07:30,07:30,08:25,24.6,True,False,Advance Single
 2026-11-14T22:45:59.781201+00:00,2027-01-12,07:25,07:25,08:27,24.6,True,False,Advance Single
 2026-11-14T22:45:59.781201+00:00,2027-01-12,07:30,07:30,08:25,26.6,True,False,Advance Single
+2026-11-15T07:10:16.556254+00:00,2027-01-07,07:25,07:25,08:27,24.6,True,False,Advance Single
+2026-11-15T07:10:16.556254+00:00,2027-01-07,07:30,07:30,08:25,26.6,True,False,Advance Single
